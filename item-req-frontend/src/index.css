@@ -1,0 +1,120 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  
+  color-scheme: light;
+  color: #213547;
+  background-color: #ffffff;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: #f9fafb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Custom focus styles */
+.focus-visible:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px #3b82f6;
+  border-radius: 0.125rem;
+}
+
+/* Form elements */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="date"],
+input[type="tel"],
+select,
+textarea {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+/* Custom checkbox styles */
+input[type="checkbox"] {
+  height: 1rem;
+  width: 1rem;
+  color: #2563eb;
+  border: 1px solid #d1d5db;
+  border-radius: 0.25rem;
+}
+
+input[type="checkbox"]:focus {
+  box-shadow: 0 0 0 2px #3b82f6;
+}
+
+/* Custom radio styles */
+input[type="radio"] {
+  height: 1rem;
+  width: 1rem;
+  color: #2563eb;
+  border: 1px solid #d1d5db;
+}
+
+input[type="radio"]:focus {
+  box-shadow: 0 0 0 2px #3b82f6;
+}
+
+/* Table styles */
+table {
+  border-collapse: collapse;
+}
+
+th, td {
+  border: 1px solid #d1d5db;
+}
+
+/* Print styles */
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-break {
+    page-break-after: always;
+  }
+  
+  .print-break-inside-avoid {
+    page-break-inside: avoid;
+  }
+  
+  /* Ensure form elements are visible in print */
+  input, select, textarea {
+    border: 1px solid #9ca3af !important;
+    background-color: white !important;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+  }
+  
+  /* Print table borders */
+  table, th, td {
+    border: 1px solid #9ca3af !important;
+  }
+}

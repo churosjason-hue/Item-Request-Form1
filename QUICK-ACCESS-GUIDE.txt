@@ -1,0 +1,58 @@
+═══════════════════════════════════════════════════════════════
+  QUICK GUIDE: Access from Other Devices
+═══════════════════════════════════════════════════════════════
+
+STEP 1: Find Your Server IP Address
+─────────────────────────────────────
+On your Windows Server, open Command Prompt and type:
+    ipconfig
+
+Look for "IPv4 Address" - that's your server IP!
+Example: 172.16.33.27
+
+STEP 2: Open Windows Firewall Port 3001
+─────────────────────────────────────────
+Open PowerShell as Administrator and run:
+    New-NetFirewallRule -DisplayName "Item Request App" -Direction Inbound -LocalPort 3001 -Protocol TCP -Action Allow
+
+Or use Windows Firewall GUI:
+    1. Press Win+R, type: wf.msc
+    2. Inbound Rules → New Rule
+    3. Port → TCP → 3001 → Allow → Finish
+
+STEP 3: Start Your Server
+──────────────────────────
+    cd item-req-backend
+    npm start
+
+You'll see the server IP addresses displayed!
+
+STEP 4: Access from Other Device
+───────────────────────────────────
+On any device on the SAME network:
+
+1. Open web browser
+2. Type: http://YOUR_SERVER_IP:3001
+   Example: http://172.16.33.27:3001
+3. Press Enter
+4. Login and use the app!
+
+═══════════════════════════════════════════════════════════════
+  TROUBLESHOOTING
+═══════════════════════════════════════════════════════════════
+
+❌ Can't access?
+   ✓ Check firewall is open (Step 2)
+   ✓ Verify server is running
+   ✓ Make sure devices are on same network
+   ✓ Try: http://SERVER_IP:3001/health (should show JSON)
+
+❌ Frontend can't connect?
+   ✓ Open browser console (F12)
+   ✓ Should see: "🌐 Network access detected: Using backend at..."
+   ✓ Check Network tab for errors
+
+═══════════════════════════════════════════════════════════════
+
+That's it! Once firewall is open, anyone on your network can access:
+    http://YOUR_SERVER_IP:3001
