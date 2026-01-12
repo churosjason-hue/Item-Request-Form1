@@ -8,6 +8,7 @@ import {
   sequelize,
 } from "../models/index.js";
 import { authenticateToken, requireRole } from "../middleware/auth.js";
+import { getActiveWorkflow, canUserApproveStep, getNextStatus, getFinalStatus } from '../utils/workflowHelper.js';
 
 const router = express.Router();
 
@@ -491,16 +492,24 @@ router.post("/:id/submit", authenticateToken, async (req, res) => {
 });
 
 // Approve service vehicle request
+// Uses configured workflow if available, otherwise defaults to department_approver -> completed
 router.post(
   "/:id/approve",
   authenticateToken,
-  requireRole(["department_approver", "it_manager", "super_administrator"]),
   async (req, res) => {
     try {
       const { id } = req.params;
-      const { comments } = req.body;
+      const { comments, remarks } = req.body;
 
-      const request = await ServiceVehicleRequest.findByPk(id);
+      const request = await ServiceVehicleRequest.findByPk(id, {
+        include: [
+          {
+            model: Department,
+            as: 'Department'
+          }
+        ]
+      });
+      
       if (!request) {
         return res.status(404).json({
           success: false,
@@ -508,25 +517,79 @@ router.post(
         });
       }
 
-      if (request.status !== "submitted") {
+      if (request.status !== "submitted" && request.status !== "returned") {
         return res.status(400).json({
           success: false,
-          message: "Only submitted requests can be approved",
+          message: "Only submitted or returned requests can be approved",
         });
       }
 
-      request.status = "approved";
-      request.approval_date = new Date();
-      if (comments) {
-        request.comments = comments;
-      }
-      await request.save();
+      // Check if there's a configured workflow
+      const workflow = await getActiveWorkflow('vehicle_request');
 
-      res.json({
-        success: true,
-        message: "Service vehicle request approved successfully",
-        request,
-      });
+      if (workflow && workflow.steps && workflow.steps.length > 0) {
+        // Use configured workflow
+        const steps = workflow.steps.sort((a, b) => a.step_number - b.step_number);
+        const currentStepNumber = request.status === 'submitted' ? 1 : 1; // Start from step 1
+        
+        // Find the current step
+        const currentStep = steps.find(step => step.step_number === currentStepNumber);
+        
+        if (!currentStep) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid workflow step",
+          });
+        }
+
+        // Check if user can approve this step
+        if (!canUserApproveStep(req.user, currentStep, request)) {
+          return res.status(403).json({
+            success: false,
+            message: "You do not have permission to approve at this step",
+          });
+        }
+
+        // Determine next status
+        const isLastStep = currentStepNumber >= steps.length;
+        const nextStatus = isLastStep ? getFinalStatus(workflow) : getNextStatus(workflow, currentStepNumber);
+
+        request.status = nextStatus;
+        request.approval_date = new Date();
+        if (comments || remarks) {
+          request.comments = comments || remarks;
+        }
+        await request.save();
+
+        res.json({
+          success: true,
+          message: isLastStep 
+            ? "Service vehicle request approved and completed successfully" 
+            : "Service vehicle request approved successfully",
+          request,
+        });
+      } else {
+        // Default workflow: department_approver approval completes the request
+        if (!["department_approver", "super_administrator"].includes(req.user.role)) {
+          return res.status(403).json({
+            success: false,
+            message: "You do not have permission to approve this request",
+          });
+        }
+
+        request.status = "completed";
+        request.approval_date = new Date();
+        if (comments || remarks) {
+          request.comments = comments || remarks;
+        }
+        await request.save();
+
+        res.json({
+          success: true,
+          message: "Service vehicle request approved and completed successfully",
+          request,
+        });
+      }
     } catch (error) {
       console.error("Error approving service vehicle request:", error);
       res.status(500).json({
@@ -542,7 +605,7 @@ router.post(
 router.post(
   "/:id/decline",
   authenticateToken,
-  requireRole(["department_approver", "it_manager", "super_administrator"]),
+  requireRole(["department_approver", "super_administrator"]),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -623,6 +686,58 @@ router.post(
       res.status(500).json({
         success: false,
         message: "Failed to assign vehicle",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// Return service vehicle request for revision
+router.post(
+  "/:id/return",
+  authenticateToken,
+  requireRole(["department_approver", "super_administrator"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { reason } = req.body;
+
+      if (!reason || reason.trim() === "") {
+        return res.status(400).json({
+          success: false,
+          message: "Return reason is required",
+        });
+      }
+
+      const request = await ServiceVehicleRequest.findByPk(id);
+      if (!request) {
+        return res.status(404).json({
+          success: false,
+          message: "Service vehicle request not found",
+        });
+      }
+
+      if (request.status !== "submitted") {
+        return res.status(400).json({
+          success: false,
+          message: "Only submitted requests can be returned",
+        });
+      }
+
+      request.status = "returned";
+      request.comments = reason;
+      await request.save();
+
+      res.json({
+        success: true,
+        message: "Service vehicle request returned for revision",
+        request,
+      });
+    } catch (error) {
+      console.error("Error returning service vehicle request:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to return request",
         error: error.message,
       });
     }

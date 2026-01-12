@@ -172,4 +172,14 @@ export const serviceVehicleRequestsAPI = {
   delete: (id) => api.delete(`/service-vehicle-requests/${id}`),
 }
 
+// Approval Workflows API
+export const workflowsAPI = {
+  getAll: () => api.get('/workflows'),
+  getById: (id) => api.get(`/workflows/${id}`),
+  getByFormType: (formType) => api.get(`/workflows/form/${formType}`),
+  create: (data) => api.post('/workflows', data),
+  update: (id, data) => api.put(`/workflows/${id}`, data),
+  delete: (id) => api.delete(`/workflows/${id}`),
+}
+
 export default api;

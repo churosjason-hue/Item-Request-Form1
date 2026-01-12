@@ -5,6 +5,7 @@ import Request from './Request.js';
 import RequestItem from './RequestItem.js';
 import Approval from './Approval.js';
 import ServiceVehicleRequest from './ServiceVehicleRequest.js';
+import ApprovalWorkflow from './ApprovalWorkflow.js';
 
 // Define associations
 
@@ -88,6 +89,22 @@ User.hasMany(ServiceVehicleRequest, {
   as: 'ServiceVehicleRequests'
 });
 
+// ApprovalWorkflow - User associations
+ApprovalWorkflow.belongsTo(User, {
+  foreignKey: 'created_by',
+  as: 'Creator'
+});
+
+ApprovalWorkflow.belongsTo(User, {
+  foreignKey: 'updated_by',
+  as: 'Updater'
+});
+
+User.hasMany(ApprovalWorkflow, {
+  foreignKey: 'created_by',
+  as: 'CreatedWorkflows'
+});
+
 // Export all models
 export {
   sequelize,
@@ -96,7 +113,8 @@ export {
   Request,
   RequestItem,
   Approval,
-  ServiceVehicleRequest
+  ServiceVehicleRequest,
+  ApprovalWorkflow
 };
 
 // Sync database function

@@ -247,10 +247,10 @@ export default function ServiceVehicleRequestForm() {
       const approvalReason = prompt("Please provide approval remarks (optional):");
       
       await serviceVehicleRequestsAPI.approve(id, { 
-        remarks: approvalReason || "" 
+        comments: approvalReason || "" 
       });
       
-      setSuccessMessage("Request approved successfully!");
+      setSuccessMessage("Request approved and completed successfully!");
       setTimeout(() => {
         navigate("/dashboard");
       }, 2000);
@@ -988,8 +988,8 @@ export default function ServiceVehicleRequestForm() {
             Submit Request
           </button>
 
-          {/* HR/Admin Actions - Only visible to HR users */}
-          {user?.role === "hr_manager" || user?.role === "admin" ? (
+          {/* Department Approver Actions - Only visible to department approvers and super admins */}
+          {(user?.role === "department_approver" || user?.role === "super_administrator") && id ? (
             <>
               <button
                 type="button"
@@ -1018,7 +1018,7 @@ export default function ServiceVehicleRequestForm() {
                 className="w-full sm:w-auto flex items-center justify-center sm:justify-start gap-2 px-4 sm:px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-xs sm:text-sm font-semibold transition-colors disabled:opacity-50"
               >
                 <CheckCircle size={14} className="sm:w-4 sm:h-4" />
-                Approve
+                Approve & Complete
               </button>
             </>
           ) : null}

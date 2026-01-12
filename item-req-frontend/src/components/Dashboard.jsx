@@ -183,13 +183,15 @@ const Dashboard = () => {
                     >
                       <Building className="h-5 w-5" />
                     </button>
-                    <button
-                      onClick={() => navigate('/settings')}
-                      className="p-2 text-gray-400 hover:text-gray-600"
-                      title="Settings"
-                    >
-                      <Settings className="h-5 w-5" />
-                    </button>
+                    {user.role === 'super_administrator' && (
+                      <button
+                        onClick={() => navigate('/settings/workflows')}
+                        className="p-2 text-gray-400 hover:text-gray-600"
+                        title="Workflow Settings"
+                      >
+                        <Settings className="h-5 w-5" />
+                      </button>
+                    )}
                   </>
                 )}
                 
