@@ -162,9 +162,7 @@ VehicleApproval.belongsTo(WorkflowStep, {
 
 WorkflowStep.hasMany(VehicleApproval, {
   foreignKey: 'workflow_step_id',
-  as: 'Approvals',
-  foreignKey: 'requested_by',
-  as: 'ServiceVehicleRequests'
+  as: 'Approvals'
 });
 
 // ServiceVehicleRequest - User associations (assigned_driver)
@@ -195,8 +193,7 @@ export {
   ServiceVehicleRequest,
   ApprovalWorkflow,
   WorkflowStep,
-  VehicleApproval,
-  ServiceVehicleRequest
+  VehicleApproval
 };
 
 // Sync database function
