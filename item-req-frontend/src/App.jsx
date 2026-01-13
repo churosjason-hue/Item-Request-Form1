@@ -9,6 +9,7 @@ import DepartmentManagement from './components/DepartmentManagement';
 import TrackRequest from './components/TrackRequest';
 import ServiceVehicleRequestForm from './components/ServiceVehicleRequestForm';
 import FormSelector from './components/FormSelector';
+import WorkflowSettings from './components/WorkflowSettings';
 
 import './App.css';
 
