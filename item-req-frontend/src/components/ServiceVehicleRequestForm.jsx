@@ -849,6 +849,13 @@ export default function ServiceVehicleRequestForm() {
     return baseProps;
   };
 
+  const renderFieldError = (fieldName) => {
+    if (errors[fieldName]) {
+      return <p className="text-red-500 text-xs mt-1">{errors[fieldName]}</p>;
+    }
+    return null;
+  };
+
   if (loading && !id) {
   return (
       <div className="flex justify-center items-center min-h-screen">
