@@ -87,7 +87,7 @@ ServiceVehicleRequest.belongsTo(User, {
 });
 
 User.hasMany(ServiceVehicleRequest, {
-  foreignKey: 'requestor_id',
+  foreignKey: 'requested_by',
   as: 'ServiceVehicleRequests'
 });
 
