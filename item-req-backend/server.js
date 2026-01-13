@@ -139,6 +139,14 @@ async function startServer() {
     await sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
     console.log('Database models synchronized.');
     
+    // Initialize default data (departments and workflows)
+    try {
+      const { initializeDefaultData } = await import('./models/index.js');
+      await initializeDefaultData();
+    } catch (error) {
+      console.error('Warning: Failed to initialize default data:', error.message);
+    }
+    
     // Start server - listen on all interfaces (0.0.0.0) to allow network access
     const HOST = process.env.HOST || '0.0.0.0';
     

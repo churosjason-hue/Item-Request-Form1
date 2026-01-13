@@ -170,16 +170,26 @@ export const serviceVehicleRequestsAPI = {
   return: (id, data) => api.post(`/service-vehicle-requests/${id}/return`, data),
   cancel: (id) => api.post(`/service-vehicle-requests/${id}/cancel`),
   delete: (id) => api.delete(`/service-vehicle-requests/${id}`),
+  assign: (id, data) => api.post(`/service-vehicle-requests/${id}/assign`, data),
+  getStats: () => api.get('/service-vehicle-requests/stats/overview'),
+  trackByReference: (referenceCode) => api.get(`/service-vehicle-requests/public/track/${referenceCode}`),
+  uploadAttachments: (id, formData) => api.post(`/service-vehicle-requests/${id}/attachments`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  }),
+  deleteAttachment: (id, filename) => api.delete(`/service-vehicle-requests/${id}/attachments/${filename}`)
 }
 
-// Approval Workflows API
+// Workflows API
 export const workflowsAPI = {
-  getAll: () => api.get('/workflows'),
+  getAll: (params) => api.get('/workflows', { params }),
   getById: (id) => api.get(`/workflows/${id}`),
-  getByFormType: (formType) => api.get(`/workflows/form/${formType}`),
   create: (data) => api.post('/workflows', data),
   update: (id, data) => api.put(`/workflows/${id}`, data),
   delete: (id) => api.delete(`/workflows/${id}`),
+  getActive: (formType) => api.get(`/workflows/active/${formType}`),
+  getAllUsers: () => api.get('/workflows/users'), // Get all users for workflow configuration
 }
 
 export default api;

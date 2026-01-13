@@ -8,32 +8,27 @@ const ApprovalWorkflow = sequelize.define('ApprovalWorkflow', {
     primaryKey: true
   },
   form_type: {
-    type: DataTypes.STRING(50),
+    type: DataTypes.ENUM('item_request', 'vehicle_request'),
     allowNull: false,
-    comment: 'Type of form: item_request, vehicle_request, etc.',
-    unique: 'unique_form_type'
+    comment: 'Type of form this workflow applies to'
   },
-  workflow_name: {
+  name: {
     type: DataTypes.STRING(200),
     allowNull: false,
-    comment: 'Name of the workflow configuration'
+    field: 'workflow_name', // Map to database column name
+    comment: 'Name/description of the workflow'
   },
   is_active: {
     type: DataTypes.BOOLEAN,
-    allowNull: false,
     defaultValue: true,
+    allowNull: false,
     comment: 'Whether this workflow is currently active'
   },
-  steps: {
-    type: DataTypes.JSON,
+  is_default: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
     allowNull: false,
-    comment: 'Array of approval steps with approver roles and conditions',
-    defaultValue: []
-  },
-  description: {
-    type: DataTypes.TEXT,
-    allowNull: true,
-    comment: 'Description of the workflow'
+    comment: 'Whether this is the default workflow for this form type'
   },
   created_by: {
     type: DataTypes.INTEGER,
@@ -56,8 +51,7 @@ const ApprovalWorkflow = sequelize.define('ApprovalWorkflow', {
 }, {
   tableName: 'approval_workflows',
   timestamps: true,
-  underscored: true,
-  freezeTableName: true
+  underscored: true
 });
 
 export default ApprovalWorkflow;

@@ -8,6 +8,7 @@ import UserManagement from './components/UserManagement';
 import DepartmentManagement from './components/DepartmentManagement';
 import TrackRequest from './components/TrackRequest';
 import ServiceVehicleRequestForm from './components/ServiceVehicleRequestForm';
+import FormSelector from './components/FormSelector';
 import WorkflowSettings from './components/WorkflowSettings';
 
 import './App.css';
@@ -58,6 +59,16 @@ function AppRoutes() {
       <Route 
         path="/track" 
         element={<TrackRequest />} 
+      />
+
+      {/* Form Selector Route */}
+      <Route 
+        path="/forms" 
+        element={
+          <ProtectedRoute>
+            <FormSelector />
+          </ProtectedRoute>
+        } 
       />
 
       {/* Protected Routes */}

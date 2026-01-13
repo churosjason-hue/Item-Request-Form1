@@ -1,32 +1,221 @@
 import express from 'express';
+import { Op } from 'sequelize';
 import { body, validationResult } from 'express-validator';
-import { ApprovalWorkflow, User } from '../models/index.js';
+import {
+  ApprovalWorkflow,
+  WorkflowStep,
+  User,
+  Department,
+  Request,
+  ServiceVehicleRequest
+} from '../models/index.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// Helper function to map user data from snake_case to camelCase
+function mapUserData(user) {
+  if (!user) return null;
+  return {
+    ...user,
+    firstName: user.first_name,
+    lastName: user.last_name,
+    fullName: `${user.first_name} ${user.last_name}`
+  };
+}
+
+// Helper function to map workflow data
+function mapWorkflowData(workflow) {
+  const workflowData = workflow.toJSON ? workflow.toJSON() : workflow;
+  
+  // Map Creator
+  if (workflowData.Creator) {
+    workflowData.Creator = mapUserData(workflowData.Creator);
+  }
+  
+  // Map Updater
+  if (workflowData.Updater) {
+    workflowData.Updater = mapUserData(workflowData.Updater);
+  }
+  
+  // Map Steps and their ApproverUser
+  if (workflowData.Steps) {
+    workflowData.Steps = workflowData.Steps.map(step => {
+      if (step.ApproverUser) {
+        step.ApproverUser = mapUserData(step.ApproverUser);
+      }
+      return step;
+    });
+  }
+  
+  return workflowData;
+}
+
+// Get all users for workflow configuration (no pagination)
+// MUST be before /:id route to avoid route conflict
+router.get('/users', authenticateToken, requireRole(['super_administrator']), async (req, res) => {
+  try {
+    const users = await User.findAll({
+      where: {
+        is_active: true
+      },
+      include: [{
+        model: Department,
+        as: 'Department',
+        attributes: ['id', 'name'],
+        required: false
+      }],
+      attributes: ['id', 'first_name', 'last_name', 'email', 'username', 'role'],
+      order: [['last_name', 'ASC'], ['first_name', 'ASC']]
+    });
+
+    const mappedUsers = users.map(user => ({
+      id: user.id,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      fullName: `${user.first_name} ${user.last_name}`,
+      email: user.email,
+      username: user.username,
+      role: user.role,
+      department: user.Department ? {
+        id: user.Department.id,
+        name: user.Department.name
+      } : null
+    }));
+
+    res.json({
+      success: true,
+      users: mappedUsers
+    });
+  } catch (error) {
+    console.error('Error fetching users for workflow:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch users',
+      error: error.message
+    });
+  }
+});
+
+// Get active workflow for a form type
+// MUST be before /:id route to avoid route conflict
+router.get('/active/:form_type', authenticateToken, async (req, res) => {
+  try {
+    const { form_type } = req.params;
+
+    if (!['item_request', 'vehicle_request'].includes(form_type)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid form type'
+      });
+    }
+
+    const workflow = await ApprovalWorkflow.findOne({
+      where: {
+        form_type,
+        is_active: true,
+        is_default: true
+      },
+      include: [
+        {
+          model: WorkflowStep,
+          as: 'Steps',
+          include: [
+            {
+              model: User,
+              as: 'ApproverUser',
+              attributes: ['id', 'first_name', 'last_name', 'email'],
+              required: false
+            },
+            {
+              model: Department,
+              as: 'ApproverDepartment',
+              attributes: ['id', 'name'],
+              required: false
+            }
+          ],
+          order: [['step_order', 'ASC']]
+        }
+      ]
+    });
+
+    if (!workflow) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active workflow found for this form type'
+      });
+    }
+
+    // Map workflow to include camelCase user fields
+    const mappedWorkflow = mapWorkflowData(workflow);
+
+    res.json({
+      success: true,
+      workflow: mappedWorkflow
+    });
+  } catch (error) {
+    console.error('Error fetching active workflow:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch active workflow',
+      error: error.message
+    });
+  }
+});
+
 // Get all workflows
 router.get('/', authenticateToken, requireRole(['super_administrator']), async (req, res) => {
   try {
+    const { form_type } = req.query;
+
+    const whereClause = {};
+    if (form_type) {
+      whereClause.form_type = form_type;
+    }
+
     const workflows = await ApprovalWorkflow.findAll({
+      where: whereClause,
       include: [
         {
           model: User,
           as: 'Creator',
-          attributes: ['id', 'firstName', 'lastName', 'fullName', 'email']
+          attributes: ['id', 'first_name', 'last_name', 'email']
         },
         {
           model: User,
           as: 'Updater',
-          attributes: ['id', 'firstName', 'lastName', 'fullName', 'email']
+          attributes: ['id', 'first_name', 'last_name', 'email'],
+          required: false
+        },
+        {
+          model: WorkflowStep,
+          as: 'Steps',
+          include: [
+            {
+              model: User,
+              as: 'ApproverUser',
+              attributes: ['id', 'first_name', 'last_name', 'email'],
+              required: false
+            },
+            {
+              model: Department,
+              as: 'ApproverDepartment',
+              attributes: ['id', 'name'],
+              required: false
+            }
+          ],
+          order: [['step_order', 'ASC']]
         }
       ],
-      order: [['form_type', 'ASC'], ['created_at', 'DESC']]
+      order: [['created_at', 'DESC']]
     });
+
+    // Map workflows to include camelCase user fields
+    const mappedWorkflows = workflows.map(mapWorkflowData);
 
     res.json({
       success: true,
-      workflows
+      workflows: mappedWorkflows
     });
   } catch (error) {
     console.error('Error fetching workflows:', error);
@@ -38,63 +227,42 @@ router.get('/', authenticateToken, requireRole(['super_administrator']), async (
   }
 });
 
-// Get workflow by form type
-router.get('/form/:formType', authenticateToken, async (req, res) => {
-  try {
-    const { formType } = req.params;
-    
-    const workflow = await ApprovalWorkflow.findOne({
-      where: {
-        form_type: formType,
-        is_active: true
-      },
-      include: [
-        {
-          model: User,
-          as: 'Creator',
-          attributes: ['id', 'firstName', 'lastName', 'fullName', 'email']
-        }
-      ],
-      order: [['created_at', 'DESC']]
-    });
-
-    if (!workflow) {
-      return res.status(404).json({
-        success: false,
-        message: 'No active workflow found for this form type'
-      });
-    }
-
-    res.json({
-      success: true,
-      workflow
-    });
-  } catch (error) {
-    console.error('Error fetching workflow:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch workflow',
-      error: error.message
-    });
-  }
-});
-
-// Get single workflow by ID
+// Get workflow by ID
 router.get('/:id', authenticateToken, requireRole(['super_administrator']), async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const workflow = await ApprovalWorkflow.findByPk(id, {
       include: [
         {
           model: User,
           as: 'Creator',
-          attributes: ['id', 'firstName', 'lastName', 'fullName', 'email']
+          attributes: ['id', 'first_name', 'last_name', 'email']
         },
         {
           model: User,
           as: 'Updater',
-          attributes: ['id', 'firstName', 'lastName', 'fullName', 'email']
+          attributes: ['id', 'first_name', 'last_name', 'email'],
+          required: false
+        },
+        {
+          model: WorkflowStep,
+          as: 'Steps',
+          include: [
+            {
+              model: User,
+              as: 'ApproverUser',
+              attributes: ['id', 'first_name', 'last_name', 'email'],
+              required: false
+            },
+            {
+              model: Department,
+              as: 'ApproverDepartment',
+              attributes: ['id', 'name'],
+              required: false
+            }
+          ],
+          order: [['step_order', 'ASC']]
         }
       ]
     });
@@ -126,19 +294,13 @@ router.post(
   authenticateToken,
   requireRole(['super_administrator']),
   [
-    body('form_type').notEmpty().withMessage('Form type is required'),
-    body('workflow_name').notEmpty().withMessage('Workflow name is required'),
-    body('steps').isArray().withMessage('Steps must be an array'),
-    body('steps').custom((steps) => {
-      if (steps.length === 0) {
-        throw new Error('At least one approval step is required');
-      }
-      return true;
-    }),
-    body('steps.*.step_number').isInt({ min: 1 }).withMessage('Step number must be a positive integer'),
-    body('steps.*.approver_role').notEmpty().withMessage('Approver role is required for each step'),
-    body('steps.*.approver_type').isIn(['role', 'user', 'department']).withMessage('Approver type must be role, user, or department'),
-    body('steps.*.scope').optional().isIn(['same_department', 'cross_department', 'any']).withMessage('Scope must be same_department, cross_department, or any')
+    body('form_type').isIn(['item_request', 'vehicle_request']).withMessage('Invalid form type'),
+    body('name').trim().isLength({ min: 1, max: 200 }).withMessage('Name is required and must be less than 200 characters'),
+    body('steps').isArray({ min: 1 }).withMessage('At least one workflow step is required'),
+    body('steps.*.step_name').trim().isLength({ min: 1 }).withMessage('Step name is required'),
+    body('steps.*.step_order').isInt({ min: 1 }).withMessage('Step order must be a positive integer'),
+    body('steps.*.approver_type').isIn(['role', 'user', 'department', 'department_approver']).withMessage('Invalid approver type'),
+    body('steps.*.status_on_approval').trim().isLength({ min: 1 }).withMessage('Status on approval is required')
   ],
   async (req, res) => {
     try {
@@ -151,60 +313,78 @@ router.post(
         });
       }
 
-      const { form_type, workflow_name, steps, description, is_active } = req.body;
+      const { form_type, name, is_active = true, is_default = false, steps } = req.body;
 
-      // Check if there's already an active workflow for this form type
-      if (is_active !== false) {
-        const existingActive = await ApprovalWorkflow.findOne({
-          where: {
-            form_type,
-            is_active: true
-          }
-        });
-
-        if (existingActive) {
-          return res.status(400).json({
-            success: false,
-            message: 'An active workflow already exists for this form type. Please deactivate it first.'
-          });
-        }
+      // If setting as default, unset other defaults for this form type
+      if (is_default) {
+        await ApprovalWorkflow.update(
+          { is_default: false },
+          { where: { form_type, is_default: true } }
+        );
       }
 
-      // Validate step numbers are sequential
-      const stepNumbers = steps.map(s => s.step_number).sort((a, b) => a - b);
-      for (let i = 0; i < stepNumbers.length; i++) {
-        if (stepNumbers[i] !== i + 1) {
-          return res.status(400).json({
-            success: false,
-            message: 'Step numbers must be sequential starting from 1'
-          });
-        }
-      }
-
+      // Create workflow
       const workflow = await ApprovalWorkflow.create({
         form_type,
-        workflow_name,
-        steps,
-        description: description || null,
-        is_active: is_active !== false,
+        name,
+        is_active,
+        is_default,
         created_by: req.user.id,
         updated_by: req.user.id
       });
 
+      // Create workflow steps
+      const createdSteps = [];
+      for (const step of steps) {
+        const workflowStep = await WorkflowStep.create({
+          workflow_id: workflow.id,
+          step_order: step.step_order,
+          step_name: step.step_name,
+          approver_type: step.approver_type,
+          approver_role: step.approver_role || null,
+          approver_user_id: step.approver_user_id || null,
+          approver_department_id: step.approver_department_id || null,
+          requires_same_department: step.requires_same_department || false,
+          is_required: step.is_required !== undefined ? step.is_required : true,
+          can_skip: step.can_skip || false,
+          status_on_approval: step.status_on_approval,
+          status_on_completion: step.status_on_completion || null
+        });
+        createdSteps.push(workflowStep);
+      }
+
+      // Reload workflow with steps
       await workflow.reload({
         include: [
           {
-            model: User,
-            as: 'Creator',
-            attributes: ['id', 'firstName', 'lastName', 'fullName', 'email']
+            model: WorkflowStep,
+            as: 'Steps',
+            include: [
+              {
+                model: User,
+                as: 'ApproverUser',
+                attributes: ['id', 'first_name', 'last_name', 'email'],
+                required: false
+              },
+              {
+                model: Department,
+                as: 'ApproverDepartment',
+                attributes: ['id', 'name'],
+                required: false
+              }
+            ],
+            order: [['step_order', 'ASC']]
           }
         ]
       });
 
+      // Map workflow to include camelCase user fields
+      const mappedWorkflow = mapWorkflowData(workflow);
+
       res.status(201).json({
         success: true,
         message: 'Workflow created successfully',
-        workflow
+        workflow: mappedWorkflow
       });
     } catch (error) {
       console.error('Error creating workflow:', error);
@@ -223,11 +403,8 @@ router.put(
   authenticateToken,
   requireRole(['super_administrator']),
   [
-    body('workflow_name').optional().notEmpty().withMessage('Workflow name cannot be empty'),
-    body('steps').optional().isArray().withMessage('Steps must be an array'),
-    body('steps.*.step_number').optional().isInt({ min: 1 }).withMessage('Step number must be a positive integer'),
-    body('steps.*.approver_role').optional().notEmpty().withMessage('Approver role is required for each step'),
-    body('steps.*.approver_type').optional().isIn(['role', 'user', 'department']).withMessage('Approver type must be role, user, or department')
+    body('name').optional().trim().isLength({ min: 1, max: 200 }).withMessage('Name must be less than 200 characters'),
+    body('steps').optional().isArray({ min: 1 }).withMessage('At least one workflow step is required')
   ],
   async (req, res) => {
     try {
@@ -241,7 +418,7 @@ router.put(
       }
 
       const { id } = req.params;
-      const { workflow_name, steps, description, is_active } = req.body;
+      const { name, is_active, is_default, steps } = req.body;
 
       const workflow = await ApprovalWorkflow.findByPk(id);
       if (!workflow) {
@@ -251,74 +428,80 @@ router.put(
         });
       }
 
-      // If activating, check if another active workflow exists for this form type
-      if (is_active === true && !workflow.is_active) {
-        const existingActive = await ApprovalWorkflow.findOne({
-          where: {
-            form_type: workflow.form_type,
-            is_active: true,
-            id: { [Op.ne]: id }
-          }
-        });
-
-        if (existingActive) {
-          return res.status(400).json({
-            success: false,
-            message: 'An active workflow already exists for this form type. Please deactivate it first.'
-          });
-        }
+      // If setting as default, unset other defaults for this form type
+      if (is_default && !workflow.is_default) {
+        await ApprovalWorkflow.update(
+          { is_default: false },
+          { where: { form_type: workflow.form_type, is_default: true, id: { [Op.ne]: id } } }
+        );
       }
 
-      // Validate steps if provided
-      if (steps) {
-        if (steps.length === 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'At least one approval step is required'
-          });
-        }
-
-        const stepNumbers = steps.map(s => s.step_number).sort((a, b) => a - b);
-        for (let i = 0; i < stepNumbers.length; i++) {
-          if (stepNumbers[i] !== i + 1) {
-            return res.status(400).json({
-              success: false,
-              message: 'Step numbers must be sequential starting from 1'
-            });
-          }
-        }
-      }
-
+      // Update workflow
       const updateData = {
         updated_by: req.user.id
       };
-
-      if (workflow_name !== undefined) updateData.workflow_name = workflow_name;
-      if (steps !== undefined) updateData.steps = steps;
-      if (description !== undefined) updateData.description = description;
+      if (name !== undefined) updateData.name = name;
       if (is_active !== undefined) updateData.is_active = is_active;
+      if (is_default !== undefined) updateData.is_default = is_default;
 
       await workflow.update(updateData);
 
+      // Update steps if provided
+      if (steps && Array.isArray(steps)) {
+        // Delete existing steps
+        await WorkflowStep.destroy({ where: { workflow_id: id } });
+
+        // Create new steps
+        for (const step of steps) {
+          await WorkflowStep.create({
+            workflow_id: id,
+            step_order: step.step_order,
+            step_name: step.step_name,
+            approver_type: step.approver_type,
+            approver_role: step.approver_role || null,
+            approver_user_id: step.approver_user_id || null,
+            approver_department_id: step.approver_department_id || null,
+            requires_same_department: step.requires_same_department || false,
+            is_required: step.is_required !== undefined ? step.is_required : true,
+            can_skip: step.can_skip || false,
+            status_on_approval: step.status_on_approval,
+            status_on_completion: step.status_on_completion || null
+          });
+        }
+      }
+
+      // Reload workflow with steps
       await workflow.reload({
         include: [
           {
-            model: User,
-            as: 'Creator',
-            attributes: ['id', 'firstName', 'lastName', 'fullName', 'email']
-          },
-          {
-            model: User,
-            as: 'Updater',
-            attributes: ['id', 'firstName', 'lastName', 'fullName', 'email']
+            model: WorkflowStep,
+            as: 'Steps',
+            include: [
+              {
+                model: User,
+                as: 'ApproverUser',
+                attributes: ['id', 'first_name', 'last_name', 'email'],
+                required: false
+              },
+              {
+                model: Department,
+                as: 'ApproverDepartment',
+                attributes: ['id', 'name'],
+                required: false
+              }
+            ],
+            order: [['step_order', 'ASC']]
           }
         ]
       });
 
+      // Map workflow to include camelCase user fields
+      const mappedWorkflow = mapWorkflowData(workflow);
+
       res.json({
         success: true,
         message: 'Workflow updated successfully',
-        workflow
+        workflow: mappedWorkflow
       });
     } catch (error) {
       console.error('Error updating workflow:', error);
@@ -342,6 +525,45 @@ router.delete('/:id', authenticateToken, requireRole(['super_administrator']), a
         success: false,
         message: 'Workflow not found'
       });
+    }
+
+    // Check if workflow is default
+    if (workflow.is_default) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete default workflow. Please set another workflow as default first.'
+      });
+    }
+
+    // Check if workflow is in use
+    // For item requests
+    if (workflow.form_type === 'item_request') {
+      const requestsUsingWorkflow = await Request.count({
+        where: {
+          status: { [Op.in]: ['submitted', 'department_approved', 'it_manager_approved', 'service_desk_processing'] }
+        }
+      });
+      if (requestsUsingWorkflow > 0 && workflow.is_active) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot delete active workflow that has pending requests. Please deactivate it first.'
+        });
+      }
+    }
+
+    // For vehicle requests
+    if (workflow.form_type === 'vehicle_request') {
+      const vehicleRequestsUsingWorkflow = await ServiceVehicleRequest.count({
+        where: {
+          status: { [Op.in]: ['submitted', 'returned'] }
+        }
+      });
+      if (vehicleRequestsUsingWorkflow > 0 && workflow.is_active) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot delete active workflow that has pending requests. Please deactivate it first.'
+        });
+      }
     }
 
     await workflow.destroy();
