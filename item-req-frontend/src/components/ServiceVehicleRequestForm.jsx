@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ArrowLeft, Plus, Trash2, Save, Send, RotateCcw, CheckCircle, XCircle } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, AlertCircle, Save, Send, RotateCcw, CheckCircle, XCircle, Loader, Paperclip, X, Download } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { validateServiceVehicleForm } from "../helpers/validations";
@@ -48,10 +48,17 @@ export default function ServiceVehicleRequestForm() {
     item_quantity: "",
     recipient_name: "",
     recipient_contact: "",
+    status: "",
+    assigned_driver: "",
+    assigned_vehicle: "",
+    approval_date: "",
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [isODHCUser, setIsODHCUser] = useState(false);
+  const [attachments, setAttachments] = useState([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
 
   useEffect(() => {
     // Get current user's full name from auth context
@@ -80,6 +87,18 @@ export default function ServiceVehicleRequestForm() {
       department_id: userDepartmentId || "",
     }));
 
+    // Check if user is from ODHC department
+    if (userData) {
+      try {
+        const parsedUser = JSON.parse(userData);
+        const departmentName = parsedUser.department?.name || '';
+        const isODHC = departmentName.toLowerCase().includes('odhc') && parsedUser.role === 'department_approver';
+        setIsODHCUser(isODHC);
+      } catch (error) {
+        console.error("Error parsing user data:", error);
+      }
+    }
+
     // Load existing request from database if editing
     if (id) {
       loadFormData(id);
@@ -92,7 +111,65 @@ export default function ServiceVehicleRequestForm() {
       const response = await serviceVehicleRequestsAPI.getById(requestId);
       // Extract request object from response if it exists
       const data = response.data.request || response.data;
-      setFormData(data);
+      console.log("Loaded vehicle request data:", data);
+      console.log("Request status:", data.status);
+      console.log("User role:", user?.role);
+      
+      // Ensure passengers is always an array
+      // If passengers exists and is an array, use it; otherwise default to empty array with one empty passenger
+      if (!data.passengers || !Array.isArray(data.passengers)) {
+        // If passengers is a string (old format), convert it
+        if (data.passengers && typeof data.passengers === 'string') {
+          data.passengers = [{ name: data.passengers }];
+        } else {
+          // Default to one empty passenger field
+          data.passengers = [{ name: "" }];
+        }
+      } else {
+        // Ensure all passenger objects have the name property
+        data.passengers = data.passengers.map(p => 
+          typeof p === 'string' ? { name: p } : (p && p.name ? p : { name: "" })
+        );
+        // If array is empty, add one empty passenger
+        if (data.passengers.length === 0) {
+          data.passengers = [{ name: "" }];
+        }
+      }
+      
+      // Map requested_date to requested_by_date for Section 4 signature
+      if (data.requested_date && !data.requested_by_date) {
+        // Format the date to YYYY-MM-DD if it's a full datetime
+        const dateValue = new Date(data.requested_date);
+        if (!isNaN(dateValue.getTime())) {
+          data.requested_by_date = dateValue.toISOString().split('T')[0];
+        }
+      }
+      
+      // Map approval_date to date format if needed
+      if (data.approval_date) {
+        const approvalDateValue = new Date(data.approval_date);
+        if (!isNaN(approvalDateValue.getTime())) {
+          data.approval_date = approvalDateValue.toISOString().split('T')[0];
+        }
+      }
+      
+      // Ensure all required fields have default values
+      setFormData({
+        ...formData,
+        ...data,
+        passengers: data.passengers || [{ name: "" }],
+        requested_by_date: data.requested_by_date || (data.requested_date ? new Date(data.requested_date).toISOString().split('T')[0] : ""),
+        assigned_driver: data.assigned_driver || '',
+        assigned_vehicle: data.assigned_vehicle || '',
+        approval_date: data.approval_date || ''
+      });
+
+      // Load attachments
+      if (data.attachments && Array.isArray(data.attachments)) {
+        setAttachments(data.attachments);
+      } else {
+        setAttachments([]);
+      }
     } catch (error) {
       console.error("Error loading form data:", error);
       alert("Error loading request data");
@@ -111,30 +188,33 @@ export default function ServiceVehicleRequestForm() {
   };
 
   const handlePassengerChange = (index, field, value) => {
-    const updatedPassengers = [...formData.passengers];
+    const currentPassengers = formData.passengers || [{ name: "" }];
+    const updatedPassengers = [...currentPassengers];
     updatedPassengers[index][field] = value;
     setFormData({ ...formData, passengers: updatedPassengers });
   };
 
   const addPassenger = () => {
+    const currentPassengers = formData.passengers || [{ name: "" }];
     setFormData({
       ...formData,
       passengers: [
-        ...formData.passengers,
+        ...currentPassengers,
         { name: "" },
       ],
     });
   };
 
   const removePassenger = (index) => {
-    const updatedPassengers = formData.passengers.filter((_, i) => i !== index);
+    const currentPassengers = formData.passengers || [{ name: "" }];
+    const updatedPassengers = currentPassengers.filter((_, i) => i !== index);
     setFormData({ ...formData, passengers: updatedPassengers });
   };
 
   const handleSubmit = async () => {
     // Validate dates before form validation
     const dateFields = ['date_prepared', 'travel_date_from', 'travel_date_to', 'expiration_date'];
-    const cleanedFormData = { ...formData, status: 'submitted' };
+    const cleanedFormData = { ...formData, status: 'draft' }; // Save as draft first
     
     dateFields.forEach(field => {
       if (cleanedFormData[field] && cleanedFormData[field].trim() === '') {
@@ -142,7 +222,9 @@ export default function ServiceVehicleRequestForm() {
       }
     });
 
-    const validation = validateServiceVehicleForm(cleanedFormData);
+    // Validate with submitted status for validation rules
+    const validationData = { ...cleanedFormData, status: 'submitted' };
+    const validation = validateServiceVehicleForm(validationData);
 
     if (!validation.isValid) {
       setErrors(validation.errors);
@@ -156,14 +238,32 @@ export default function ServiceVehicleRequestForm() {
 
       const dataToSubmit = { ...cleanedFormData };
 
+      let requestId = id;
+
       if (id) {
-        // Update existing request
+        // Update existing request (as draft)
         await serviceVehicleRequestsAPI.update(id, dataToSubmit);
-        setSuccessMessage("Request submitted successfully!");
+        requestId = id;
       } else {
-        // Create new request  
-        await serviceVehicleRequestsAPI.create(dataToSubmit);
+        // Create new request (as draft)
+        const response = await serviceVehicleRequestsAPI.create(dataToSubmit);
+        // Handle different response structures - ServiceVehicleRequest uses 'id' field mapped to 'request_id' in DB
+        requestId = response.data?.request?.id || 
+                   response.data?.request?.request_id ||
+                   response.data?.id;
+        
+        if (!requestId) {
+          console.error('Response structure:', response.data);
+          throw new Error("Could not determine request ID from response");
+        }
+      }
+      
+      // Now submit the request (this will trigger email notifications)
+      if (requestId) {
+        await serviceVehicleRequestsAPI.submit(requestId);
         setSuccessMessage("Service Vehicle Request submitted successfully!");
+      } else {
+        throw new Error("Failed to get request ID after creation");
       }
       
       setTimeout(() => {
@@ -211,6 +311,117 @@ export default function ServiceVehicleRequestForm() {
     }
   };
 
+  const handleFileUpload = async (event) => {
+    const files = Array.from(event.target.files);
+    if (!files.length) return;
+
+    // Check if user is an approver (department_approver or super_administrator)
+    if (user?.role !== 'department_approver' && user?.role !== 'super_administrator') {
+      alert("Only approvers can upload attachments");
+      event.target.value = ''; // Reset file input
+      return;
+    }
+
+    // Allow uploads for submitted, returned, department_approved, or completed requests
+    // ODHC approvers need to upload attachments when status is department_approved (after Step 1 approval)
+    if (!['submitted', 'returned', 'department_approved', 'completed'].includes(formData.status)) {
+      alert("Attachments can only be uploaded for submitted, returned, department_approved, or completed requests");
+      event.target.value = ''; // Reset file input
+      return;
+    }
+
+    if (!id) {
+      alert("Please save the request first before uploading attachments");
+      event.target.value = ''; // Reset file input
+      return;
+    }
+
+    try {
+      setUploadingFiles(true);
+      const formData = new FormData();
+      files.forEach(file => {
+        formData.append('files', file);
+      });
+
+      const response = await serviceVehicleRequestsAPI.uploadAttachments(id, formData);
+      
+      if (response.data.success) {
+        setAttachments(prev => [...prev, ...response.data.attachments]);
+        setSuccessMessage("Files uploaded successfully!");
+        setTimeout(() => setSuccessMessage(""), 3000);
+      }
+    } catch (error) {
+      console.error("Error uploading files:", error);
+      alert(error.response?.data?.message || "Error uploading files");
+    } finally {
+      setUploadingFiles(false);
+      event.target.value = ''; // Reset file input
+    }
+  };
+
+  const handleDeleteAttachment = async (filename) => {
+    if (!id) return;
+    
+    if (!window.confirm("Are you sure you want to delete this attachment?")) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await serviceVehicleRequestsAPI.deleteAttachment(id, filename);
+      setAttachments(prev => prev.filter(att => att.filename !== filename));
+      setSuccessMessage("Attachment deleted successfully!");
+      setTimeout(() => setSuccessMessage(""), 3000);
+    } catch (error) {
+      console.error("Error deleting attachment:", error);
+      alert(error.response?.data?.message || "Error deleting attachment");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (!bytes || bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  };
+
+  const handleSaveSection4 = async () => {
+    if (!id) {
+      alert("Please save the request first before updating Section 4");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      const section4Data = {
+        assigned_driver: formData.assigned_driver || null,
+        assigned_vehicle: formData.assigned_vehicle || null,
+        approval_date: formData.approval_date || null,
+      };
+
+      // Use the assign endpoint or update endpoint
+      await serviceVehicleRequestsAPI.assign(id, section4Data);
+      
+      setSuccessMessage("Section 4 updated successfully!");
+      
+      // Reload form data to get updated values
+      await loadFormData(id);
+      
+      setTimeout(() => {
+        setSuccessMessage("");
+      }, 3000);
+    } catch (error) {
+      console.error("Error saving Section 4:", error);
+      alert(error.response?.data?.message || "Error saving Section 4");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCancel = () => {
     const confirmCancel = window.confirm(
       "Are you sure you want to cancel? Any unsaved changes will be lost."
@@ -242,6 +453,38 @@ export default function ServiceVehicleRequestForm() {
   };
 
   const handleApprove = async () => {
+    // Validate Section 4 fields before approval ONLY if user is ODHC
+    if (isODHCUser) {
+      if (!formData.assigned_driver || !formData.assigned_driver.trim()) {
+        alert("Please fill in the Assigned Driver field in Section 4 before approving.");
+        return;
+      }
+
+      if (!formData.assigned_vehicle || !formData.assigned_vehicle.trim()) {
+        alert("Please fill in the Assigned Vehicle field in Section 4 before approving.");
+        return;
+      }
+
+      if (!formData.approval_date) {
+        alert("Please fill in the Approval Date field in Section 4 before approving.");
+        return;
+      }
+
+      // If Section 4 fields are not saved, save them first (only for ODHC users)
+      if (id) {
+        try {
+          setLoading(true);
+          await handleSaveSection4();
+          // Wait a moment for the save to complete
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (error) {
+          console.error("Error saving Section 4:", error);
+          alert("Error saving Section 4. Please try again.");
+          setLoading(false);
+          return;
+        }
+      }
+    }
     try {
       setLoading(true);
       const approvalReason = prompt("Please provide approval remarks (optional):");
@@ -250,7 +493,7 @@ export default function ServiceVehicleRequestForm() {
         remarks: approvalReason || "" 
       });
       
-      setSuccessMessage("Request approved successfully!");
+      setSuccessMessage("Request approved and completed successfully!");
       setTimeout(() => {
         navigate("/dashboard");
       }, 2000);
@@ -422,6 +665,30 @@ export default function ServiceVehicleRequestForm() {
       point_to_point_service: {
         title: "ACCOMPLISH THIS PART IF REQUEST IS POINT-TO-POINT",
         fields: [
+          {
+            name: "pick_up_location",
+            label: "Pick-Up Location",
+            type: "text",
+            span: 1,
+          },
+          {
+            name: "pick_up_time",
+            label: "Pick-Up Time",
+            type: "time",
+            span: 1,
+          },
+          {
+            name: "drop_off_location",
+            label: "Drop-Off Location",
+            type: "text",
+            span: 1,
+          },
+          {
+            name: "drop_off_time",
+            label: "Drop-Off Time",
+            type: "time",
+            span: 1,
+          },
           { name: "destination", label: "Destination", type: "text", span: 2 },
           {
             name: "departure_time",
@@ -430,7 +697,8 @@ export default function ServiceVehicleRequestForm() {
             span: 1,
           },
         ],
-        showPassengers: false,
+        showPassengers: true,
+        passengerLabel: "Passengers",
       },
       car_only: {
         title: "ACCOMPLISH THIS PART IF REQUEST IS CAR ONLY",
@@ -453,139 +721,160 @@ export default function ServiceVehicleRequestForm() {
     if (!config) return null;
 
     return (
-      <div className="border border-gray-400 p-4 mb-6">
-        <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
-          <h2 className="text-sm font-bold text-gray-900 uppercase">{config.title}</h2>
-        </div>
+      <div className="space-y-4">
+        <div className="bg-gray-50 p-3 border border-gray-300">
+          <h3 className="text-xs font-bold text-gray-900 mb-3">
+          {config.title}
+          </h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
           {config.fields.map((field) => (
             <div
               key={field.name}
               className={field.span === 2 ? "col-span-1 md:col-span-2" : ""}
             >
-              <label className="block text-xs font-semibold text-gray-700 mb-1">
-                {field.label}
-              </label>
-              <div className={`border-b-2 pb-1 ${errors[field.name] ? 'border-red-500' : 'border-gray-400'}`}>
-                <input
-                  type={field.type}
-                  name={field.name}
-                  value={formData[field.name] || ''}
-                  {...getInputProps({
-                    onChange: handleChange,
-                    className: "w-full bg-transparent border-0 focus:outline-none text-sm",
-                    placeholder: `Enter ${field.label.toLowerCase()}`
-                  })}
-                />
-              </div>
-              {errors[field.name] && (
-                <p className="text-red-500 text-xs mt-1">{errors[field.name]}</p>
-              )}
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    {field.label}
+                  </label>
+                <div className={`border-b-2 pb-1 ${errors[field.name] ? 'border-red-500' : 'border-gray-400'}`}>
+                  <input
+                    type={field.type}
+                    name={field.name}
+                    value={formData[field.name] || ''}
+                    {...getInputProps({
+                      onChange: handleChange,
+                      className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                      disabled: loading
+                    })}
+                  />
+                </div>
+                {errors[field.name] && (
+                  <p className="text-red-500 text-xs mt-1">{errors[field.name]}</p>
+                )}
             </div>
           ))}
         </div>
 
         {/* Passengers Section */}
         {config.showPassengers && (
-          <div className="mt-6">
+            <div className="border-t border-gray-300 pt-4 mt-4">
             <div className="flex justify-between items-center mb-3">
-              <h3 className="text-sm font-semibold text-gray-900">
+                <h3 className="text-xs font-bold text-gray-900">
                 {config.passengerLabel || "Passengers"}
               </h3>
-              {!isViewing && (
-                <button
-                  type="button"
-                  onClick={addPassenger}
-                  disabled={loading}
-                  className="flex items-center text-blue-600 hover:text-blue-800 text-sm"
-                >
-                  <Plus className="h-4 w-4 mr-1" />
-                  Add Passenger
-                </button>
-              )}
+                {!isViewing && (
+              <button
+                    type="button"
+                onClick={addPassenger}
+                disabled={loading}
+                    className="flex items-center gap-1 text-blue-600 hover:text-blue-800 text-sm"
+              >
+                    <Plus className="h-4 w-4" />
+                Add Passenger
+              </button>
+                )}
             </div>
 
-            {formData.passengers.map((passenger, index) => (
+            {(formData.passengers || []).map((passenger, index) => (
               <div
                 key={index}
-                className="border border-gray-300 p-3 mb-3 bg-gray-50"
+                  className="bg-gray-50 p-3 mb-3 border border-gray-300"
               >
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs font-semibold text-gray-700">
+                    <span className="text-xs font-semibold text-gray-700">
                     Passenger {index + 1}
                   </span>
-                  {!isViewing && formData.passengers.length > 1 && (
+                    {!isViewing && (formData.passengers || []).length > 1 && (
                     <button
-                      type="button"
+                        type="button"
                       onClick={() => removePassenger(index)}
                       disabled={loading}
-                      className="text-red-600 hover:text-red-800"
+                        className="text-red-600 hover:text-red-800"
                     >
-                      <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-4 w-4" />
                     </button>
                   )}
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Name</label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="grid grid-cols-1 gap-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">Name</label>
+                      <div className="border-b-2 border-gray-400 pb-1">
                     <input
                       type="text"
-                      value={passenger.name || ''}
-                      {...getInputProps({
-                        onChange: (e) => handlePassengerChange(index, "name", e.target.value),
-                        className: "w-full bg-transparent border-0 focus:outline-none text-sm",
-                        placeholder: "Passenger name"
-                      })}
+                      value={passenger.name}
+                          {...getInputProps({
+                            onChange: (e) => handlePassengerChange(index, "name", e.target.value),
+                            className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                            disabled: loading
+                          })}
                     />
+                      </div>
                   </div>
                 </div>
               </div>
             ))}
-            {errors.passengers && (
-              <p className="text-red-500 text-xs mt-1">{errors.passengers}</p>
-            )}
+              {errors.passengers && (
+                <p className="text-red-500 text-xs mt-1">{errors.passengers}</p>
+              )}
           </div>
         )}
+        </div>
       </div>
     );
   };
 
+  const currentPath = window.location.pathname;
+  const isEditing = currentPath.includes('/edit');
+  const isViewing = !!id && !isEditing;
+  const isCreating = !id;
+  
+  // Check if request is submitted/completed (should be read-only)
+  // Returned requests can be edited by the requestor even when viewing
+  const isReturnedAndCanEdit = isViewing && formData.status === 'returned' && user?.id === formData.requested_by;
+  const isReadOnly = isViewing && formData.status && !['draft', 'returned'].includes(formData.status) && !isReturnedAndCanEdit;
+
+  const getInputProps = (baseProps = {}) => {
+    // Allow editing if: creating, editing, or viewing returned request as requestor
+    const canEdit = isCreating || isEditing || isReturnedAndCanEdit;
+    
+    if (!canEdit && (isViewing || isReadOnly)) {
+      return {
+        ...baseProps,
+        disabled: true,
+        readOnly: true,
+        className: `${baseProps.className || ''} bg-gray-50 cursor-not-allowed`.trim()
+      };
+    }
+    return baseProps;
+  };
+
+  const renderFieldError = (fieldName) => {
+    if (errors[fieldName]) {
+      return <p className="text-red-500 text-xs mt-1">{errors[fieldName]}</p>;
+    }
+    return null;
+  };
+
   if (loading && !id) {
-    return (
+  return (
       <div className="flex justify-center items-center min-h-screen">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
       </div>
     );
   }
 
-  const currentPath = window.location.pathname;
-  const isEditing = currentPath.includes('/edit');
-  const isViewing = !!id && !isEditing;
-
-  const getInputProps = (baseProps = {}) => {
-    if (isViewing) {
-      return {
-        ...baseProps,
-        disabled: true,
-        className: `${baseProps.className || ''} bg-gray-50`.trim()
-      };
-    }
-    return baseProps;
-  };
-
   return (
     <div className="min-h-screen bg-gray-100 py-8">
       {/* Back Button */}
       <div className="max-w-4xl mx-auto mb-4 px-4">
-        <button
+          <button
           onClick={() => navigate('/dashboard')}
           className="flex items-center text-gray-600 hover:text-gray-800"
-        >
+          >
           <ArrowLeft className="h-5 w-5 mr-1" />
           Back to Dashboard
-        </button>
+          </button>
       </div>
 
       {/* PDF-like Form Container */}
@@ -612,50 +901,30 @@ export default function ServiceVehicleRequestForm() {
               <h1 className="text-2xl font-bold text-gray-900 uppercase tracking-wide">
                 Service Vehicle Request Form
               </h1>
-              {id && (
+              {(isViewing || isEditing) && id && (
                 <div className="text-sm text-gray-600 mt-2">
-                  Request ID: <span className="font-semibold">{id}</span>
+                  Reference Code: <span className="font-semibold">{formData.reference_code || `SVR-${id}`}</span>
                 </div>
               )}
             </div>
-          </div>
+        </div>
 
-          {/* Reminders Section */}
-          <div className="border border-gray-400 p-4 mb-6 bg-yellow-50">
-            <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
-              <h2 className="text-sm font-bold text-gray-900 uppercase">Reminders</h2>
-            </div>
-            <ol className="text-xs space-y-1 ml-4 list-decimal text-gray-700">
-              <li>
-                Request for service vehicle must be planned and must be filed at
-                least one (1) business day before the planned travel. Cut-off
-                time for filing of request is at 4pm, Mondays to Fridays.
-              </li>
-              <li>
-                For cancellation, notify General Services at least one (1) hour
-                before the scheduled travel.
-              </li>
-            </ol>
+        {/* Success Message */}
+        {successMessage && (
+            <div className="mb-6 p-4 bg-green-50 border-2 border-green-400">
+              <p className="text-green-700 text-sm font-semibold">{successMessage}</p>
           </div>
+        )}
 
           {/* Error Display */}
           {errors.submit && (
             <div className="bg-red-50 border-2 border-red-400 p-4 mb-4">
               <p className="text-red-600 text-sm">{errors.submit}</p>
-            </div>
-          )}
-
-          {/* Success Message */}
-          {successMessage && (
-            <div className="bg-green-50 border-2 border-green-400 p-4 mb-4">
-              <p className="text-green-700 text-sm font-semibold">{successMessage}</p>
-            </div>
-          )}
+          </div>
+        )}
 
           {/* Form */}
           <form className="space-y-6">
-         
-
             {/* Section 1: Requestor Information */}
             <div className="border border-gray-400 p-4 mb-6">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
@@ -664,14 +933,13 @@ export default function ServiceVehicleRequestForm() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Requestor <span className="text-red-600">*</span>
+                    Name of Requestor <span className="text-red-600">*</span>
                   </label>
                   <div className="border-b-2 border-gray-400 pb-1">
                     <input
                       type="text"
-                      name="requestor_name"
                       value={formData.requestor_name}
-                      readOnly
+                      disabled
                       className="w-full bg-transparent border-0 focus:outline-none text-sm"
                     />
                   </div>
@@ -687,7 +955,8 @@ export default function ServiceVehicleRequestForm() {
                       value={formData.date_prepared}
                       {...getInputProps({
                         onChange: handleChange,
-                        className: "w-full bg-transparent border-0 focus:outline-none text-sm"
+                        className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                        disabled: loading
                       })}
                     />
                   </div>
@@ -716,7 +985,7 @@ export default function ServiceVehicleRequestForm() {
                           return "";
                         })()
                       }
-                      readOnly
+                      disabled
                       className="w-full bg-transparent border-0 focus:outline-none text-sm"
                     />
                   </div>
@@ -733,7 +1002,7 @@ export default function ServiceVehicleRequestForm() {
                       {...getInputProps({
                         onChange: handleChange,
                         className: "w-full bg-transparent border-0 focus:outline-none text-sm",
-                        placeholder: "Contact number"
+                        disabled: loading
                       })}
                     />
                   </div>
@@ -742,104 +1011,177 @@ export default function ServiceVehicleRequestForm() {
                   )}
                 </div>
               </div>
-            </div>
+          </div>
 
             {/* Section 2: Request Details */}
             <div className="border border-gray-400 p-4 mb-6">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
-                <h2 className="text-sm font-bold text-gray-900 uppercase">Section 2: Request Details</h2>
-              </div>
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Purpose of Request
-                  </label>
-                  <div className={`border-b-2 pb-1 ${errors.purpose ? 'border-red-500' : 'border-gray-400'}`}>
-                    <textarea
-                      name="purpose"
-                      value={formData.purpose}
-                      {...getInputProps({
-                        onChange: handleChange,
-                        className: "w-full bg-transparent border-0 focus:outline-none text-sm",
-                        rows: 3,
-                        placeholder: "Explain the purpose of this vehicle request..."
-                      })}
-                    />
-                  </div>
-                  {errors.purpose && (
-                    <p className="text-red-500 text-xs mt-1">{errors.purpose}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Type of Request <span className="text-red-600">*</span>
-                  </label>
-                  <div className={`border-b-2 pb-1 ${errors.request_type ? 'border-red-500' : 'border-gray-400'}`}>
-                    <select
-                      name="request_type"
-                      value={formData.request_type}
-                      {...getInputProps({
-                        onChange: handleChange,
-                        className: "w-full bg-transparent border-0 focus:outline-none text-sm"
-                      })}
-                    >
-                      <option value="">Select Request Type</option>
-                      {REQUEST_TYPE_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {errors.request_type && (
-                    <p className="text-red-500 text-xs mt-1">{errors.request_type}</p>
-                  )}
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
-                      Travel Date From
-                    </label>
-                    <div className={`border-b-2 pb-1 ${errors.travel_date_from ? 'border-red-500' : 'border-gray-400'}`}>
-                      <input
-                        type="date"
-                        name="travel_date_from"
-                        value={formData.travel_date_from}
-                        {...getInputProps({
-                          onChange: handleChange,
-                          className: "w-full bg-transparent border-0 focus:outline-none text-sm"
-                        })}
-                      />
-                    </div>
-                    {errors.travel_date_from && (
-                      <p className="text-red-500 text-xs mt-1">{errors.travel_date_from}</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
-                      Travel Date To
-                    </label>
-                    <div className={`border-b-2 pb-1 ${errors.travel_date_to ? 'border-red-500' : 'border-gray-400'}`}>
-                      <input
-                        type="date"
-                        name="travel_date_to"
-                        value={formData.travel_date_to}
-                        {...getInputProps({
-                          onChange: handleChange,
-                          className: "w-full bg-transparent border-0 focus:outline-none text-sm"
-                        })}
-                      />
-                    </div>
-                    {errors.travel_date_to && (
-                      <p className="text-red-500 text-xs mt-1">{errors.travel_date_to}</p>
-                    )}
-                  </div>
-                </div>
+                <h2 className="text-sm font-bold text-gray-900 uppercase">Section 2: Request Specific Details</h2>
               </div>
             </div>
 
-            {/* Section 3: Request Type Specific Details */}
-            {renderConditionalSection()}
+            {/* Section 1: Requestor Information */}
+            <div className="border border-gray-400 p-4 mb-6">
+              <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
+                <h2 className="text-sm font-bold text-gray-900 uppercase">Section 1: Requestor Information</h2>
+              </div>
+
+            {/* Requestor Information */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 md:gap-x-8 md:gap-y-2 mb-3 md:mb-4">
+              <div className="flex flex-col">
+                <label className="text-xs font-semibold mb-1">
+                  Requestor
+                </label>
+                <input
+                  type="text"
+                  name="requestor_name"
+                  value={formData.requestor_name}
+                  readOnly
+                  className="border-b border-black px-2 py-1 text-xs focus:outline-none bg-gray-100 cursor-not-allowed"
+                />
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs font-semibold mb-1">
+                  Date Prepared
+                </label>
+                <input
+                  type="date"
+                  name="date_prepared"
+                  value={formData.date_prepared}
+                  {...getInputProps({
+                    onChange: handleChange,
+                    className: "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500",
+                    disabled: loading || isReadOnly
+                  })}
+                />
+                {renderFieldError("date_prepared")}
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs font-semibold mb-1">
+                  Function / Department
+                </label>
+                <input
+                  type="text"
+                  name="department_id"
+                  value={
+                    (() => {
+                      const userData = localStorage.getItem("user");
+                      if (userData) {
+                        try {
+                          const parsedUser = JSON.parse(userData);
+                          return parsedUser.department?.name || "";
+                        } catch (error) {
+                          return "";
+                        }
+                      }
+                      return "";
+                    })()
+                  }
+                  readOnly
+                  className="border-b border-black px-2 py-1 text-xs focus:outline-none bg-gray-100 cursor-not-allowed"
+                />
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs font-semibold mb-1">
+                  Contact Number
+                </label>
+                <input
+                  type="tel"
+                  name="contact_number"
+                  value={formData.contact_number}
+                  {...getInputProps({
+                    onChange: handleChange,
+                    className: "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500",
+                    disabled: loading || isReadOnly
+                  })}
+                />
+                {renderFieldError("contact_number")}
+              </div>
+            </div>
+
+            {/* Purpose */}
+            <div className="mb-3 md:mb-4 flex flex-col">
+              <label className="text-xs font-semibold block mb-1">
+                Purpose of Request
+              </label>
+              <textarea
+                name="purpose"
+                value={formData.purpose}
+                {...getInputProps({
+                  onChange: handleChange,
+                  className: "w-full border border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500",
+                  disabled: loading || isReadOnly,
+                  rows: "2"
+                })}
+              ></textarea>
+              {renderFieldError("purpose")}
+            </div>
+
+            {/* Request Type */}
+            <div className="mb-3 md:mb-4 flex flex-col">
+              <label className="text-xs font-semibold block mb-1">
+                Type of Request
+              </label>
+              <select
+                name="request_type"
+                value={formData.request_type}
+                {...getInputProps({
+                  onChange: handleChange,
+                  className: "w-full border border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500",
+                  disabled: loading || isReadOnly
+                })}
+              >
+                <option value="" disabled>
+                  Select Request Type
+                </option>
+                {REQUEST_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {renderFieldError("request_type")}
+            </div>
+
+            {/* Travel Dates */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 md:gap-x-8 md:gap-y-2 mb-3 md:mb-4">
+              <div className="flex flex-col">
+                <label className="text-xs font-semibold mb-1">
+                  Travel Date From
+                </label>
+                <input
+                  type="date"
+                  name="travel_date_from"
+                  value={formData.travel_date_from}
+                  {...getInputProps({
+                    onChange: handleChange,
+                    className: "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500",
+                    disabled: loading || isReadOnly
+                  })}
+                />
+                {renderFieldError("travel_date_from")}
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs font-semibold mb-1">
+                  Travel Date To
+                </label>
+                <input
+                  type="date"
+                  name="travel_date_to"
+                  value={formData.travel_date_to}
+                  {...getInputProps({
+                    onChange: handleChange,
+                    className: "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500",
+                    disabled: loading || isReadOnly
+                  })}
+                />
+                {renderFieldError("travel_date_to")}
+              </div>
+            </div>
+
+            {/* Dynamic Conditional Section */}
+            {formData.request_type && renderConditionalSection()}
+            </div>
 
             {/* Section 3: Driver's License Information - Only for car_only request type */}
             {formData.request_type === "car_only" && (
@@ -853,36 +1195,37 @@ export default function ServiceVehicleRequestForm() {
                       Do you have a valid Driver's License?
                     </label>
                     <div className="border-b-2 border-gray-400 pb-1">
-                      <select
-                        name="has_valid_license"
-                        value={formData.has_valid_license}
+                    <select
+                      name="has_valid_license"
+                      value={formData.has_valid_license}
                         {...getInputProps({
                           onChange: handleChange,
-                          className: "w-full bg-transparent border-0 focus:outline-none text-sm"
+                          className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                          disabled: loading
                         })}
-                      >
-                        <option value="">Select</option>
-                        <option value="true">Yes</option>
-                        <option value="false">No</option>
-                      </select>
-                    </div>
+                    >
+                        <option value="" disabled>Select</option>
+                      <option value="true">Yes</option>
+                      <option value="false">No</option>
+                    </select>
+                  </div>
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-gray-700 mb-1">
                       License Number
                     </label>
                     <div className={`border-b-2 pb-1 ${errors.license_number ? 'border-red-500' : 'border-gray-400'}`}>
-                      <input
-                        type="text"
-                        name="license_number"
+                    <input
+                      type="text"
+                      name="license_number"
                         value={formData.license_number || ''}
                         {...getInputProps({
                           onChange: handleChange,
-                          disabled: formData.has_valid_license === "false" || formData.has_valid_license === "",
-                          className: "w-full bg-transparent border-0 focus:outline-none text-sm"
+                          className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                          disabled: loading || formData.has_valid_license === "false" || formData.has_valid_license === ""
                         })}
-                      />
-                    </div>
+                    />
+                  </div>
                     {errors.license_number && (
                       <p className="text-red-500 text-xs mt-1">{errors.license_number}</p>
                     )}
@@ -892,14 +1235,14 @@ export default function ServiceVehicleRequestForm() {
                       License Expiration Date
                     </label>
                     <div className={`border-b-2 pb-1 ${errors.expiration_date ? 'border-red-500' : 'border-gray-400'}`}>
-                      <input
-                        type="date"
-                        name="expiration_date"
+                    <input
+                      type="date"
+                      name="expiration_date"
                         value={formData.expiration_date || ''}
                         {...getInputProps({
                           onChange: handleChange,
-                          disabled: formData.has_valid_license === "false" || formData.has_valid_license === "",
-                          className: "w-full bg-transparent border-0 focus:outline-none text-sm"
+                          className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                          disabled: loading || formData.has_valid_license === "false" || formData.has_valid_license === ""
                         })}
                       />
                     </div>
@@ -911,10 +1254,10 @@ export default function ServiceVehicleRequestForm() {
               </div>
             )}
 
-            {/* Section 4: Requested By */}
+            {/* Section 3: Requestor Signature */}
             <div className="border border-gray-400 p-4 mb-6">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
-                <h2 className="text-sm font-bold text-gray-900 uppercase">Section 4: Requested By</h2>
+                <h2 className="text-sm font-bold text-gray-900 uppercase">Section 3: Requestor Signature</h2>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
@@ -922,29 +1265,32 @@ export default function ServiceVehicleRequestForm() {
                     Name and Signature
                   </label>
                   <div className="border-b-2 border-gray-400 pb-1">
-                    <input
-                      type="text"
-                      name="requested_by_signature"
-                      value={formData.requested_by_signature}
-                      readOnly
-                      className="w-full bg-transparent border-0 focus:outline-none text-sm text-center"
-                    />
-                  </div>
+                  <input
+                    type="text"
+                    name="requested_by_signature"
+                    value={formData.requested_by_signature || formData.requestor_name || ''}
+                    {...getInputProps({
+                      className: "w-full bg-transparent border-0 focus:outline-none text-sm text-center",
+                      disabled: loading || isReadOnly
+                    })}
+                  />
+                </div>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Date
                   </label>
                   <div className={`border-b-2 pb-1 ${errors.requested_by_date ? 'border-red-500' : 'border-gray-400'}`}>
-                    <input
-                      type="date"
-                      name="requested_by_date"
-                      value={formData.requested_by_date || ''}
+                  <input
+                    type="date"
+                    name="requested_by_date"
+                    value={formData.requested_by_date || formData.requested_date || ''}
                       {...getInputProps({
                         onChange: handleChange,
-                        className: "w-full bg-transparent border-0 focus:outline-none text-sm text-center"
+                        className: "w-full bg-transparent border-0 focus:outline-none text-sm text-center",
+                        disabled: loading || isReadOnly
                       })}
-                    />
+                  />
                   </div>
                   {errors.requested_by_date && (
                     <p className="text-red-500 text-xs mt-1">{errors.requested_by_date}</p>
@@ -953,10 +1299,10 @@ export default function ServiceVehicleRequestForm() {
               </div>
             </div>
 
-            {/* Section 5: General Services Section */}
+            {/* Section 4: General Services Section */}
             <div className="border border-gray-400 p-4 mb-6">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
-                <h2 className="text-sm font-bold text-gray-900 uppercase">Section 5: To Be Accomplished By OD & Human Capital – General Services</h2>
+                <h2 className="text-sm font-bold text-gray-900 uppercase">Section 4: To Be Accomplished by OD & Human Capital – General Services</h2>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
@@ -964,101 +1310,245 @@ export default function ServiceVehicleRequestForm() {
                     Reference Code
                   </label>
                   <div className="border-b-2 border-gray-400 pb-1">
-                    <div className="w-full bg-transparent text-sm text-gray-500">-</div>
-                  </div>
+                    <div className="text-sm text-gray-500">{formData.reference_code || '-'}</div>
+                </div>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Assigned Driver
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
-                    <div className="w-full bg-transparent text-sm text-gray-500">-</div>
-                  </div>
+                  {isODHCUser && (isViewing || isEditing) ? (
+                    <input
+                      type="text"
+                      name="assigned_driver"
+                      value={formData.assigned_driver || ''}
+                      onChange={handleChange}
+                      disabled={loading}
+                      placeholder="Enter driver name"
+                      className="w-full bg-transparent border-b-2 border-gray-400 pb-1 focus:outline-none text-sm text-center"
+                    />
+                  ) : (
+                    <div className="border-b-2 border-gray-400 pb-1">
+                      <div className="text-sm text-gray-500">
+                        {formData.assigned_driver || '-'}
+                </div>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Approval Date
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
-                    <div className="w-full bg-transparent text-sm text-gray-500">-</div>
-                  </div>
+                  {isODHCUser && (isViewing || isEditing) ? (
+                    <input
+                      type="date"
+                      name="approval_date"
+                      value={formData.approval_date || ''}
+                      onChange={handleChange}
+                      disabled={loading}
+                      className="w-full bg-transparent border-b-2 border-gray-400 pb-1 focus:outline-none text-sm text-center"
+                    />
+                  ) : (
+                    <div className="border-b-2 border-gray-400 pb-1">
+                      <div className="text-sm text-gray-500">
+                        {formData.approval_date ? new Date(formData.approval_date).toLocaleDateString() : '-'}
+                </div>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Assigned Vehicle
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
-                    <div className="w-full bg-transparent text-sm text-gray-500">-</div>
-                  </div>
+                  {isODHCUser && (isViewing || isEditing) ? (
+                    <input
+                      type="text"
+                      name="assigned_vehicle"
+                      value={formData.assigned_vehicle || ''}
+                      onChange={handleChange}
+                      disabled={loading}
+                      placeholder="Enter vehicle plate number or ID"
+                      className="w-full bg-transparent border-b-2 border-gray-400 pb-1 focus:outline-none text-sm text-center"
+                    />
+                  ) : (
+                    <div className="border-b-2 border-gray-400 pb-1">
+                      <div className="text-sm text-gray-500">{formData.assigned_vehicle || '-'}</div>
                 </div>
+                  )}
               </div>
             </div>
+              {isODHCUser && (isViewing || isEditing) && (
+                <div className="mt-4">
+                  {!(formData.assigned_driver && formData.assigned_driver.trim() && formData.assigned_vehicle && formData.assigned_vehicle.trim() && formData.approval_date) && formData.status === 'submitted' && (
+                    <div className="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
+                      <strong>⚠️ Action Required:</strong> Please complete Section 4 (Assigned Driver, Assigned Vehicle, and Approval Date) before approving this request.
+          </div>
+                  )}
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleSaveSection4}
+                      disabled={loading}
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-semibold disabled:opacity-50"
+                    >
+                      {loading ? 'Saving...' : 'Save Section 4'}
+                    </button>
+        </div>
+                </div>
+              )}
+            </div>
 
-            {/* Action Buttons */}
-            <div className="flex justify-end space-x-4 pt-6 border-t-2 border-gray-400 mt-8">
-              <button
-                type="button"
-                onClick={handleCancel}
-                disabled={loading}
-                className="px-6 py-2 border-2 border-gray-400 rounded text-gray-700 hover:bg-gray-50 text-sm font-semibold"
-              >
-                Cancel
-              </button>
+            {/* Attachments Section */}
+            <div className="border border-gray-400 p-4 mb-6">
+              <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
+                <h2 className="text-sm font-bold text-gray-900 uppercase">Attachments</h2>
+              </div>
               
-              {!isViewing && (
+              {/* Show upload UI for approvers (department_approver) and super_administrator when status is submitted, returned, department_approved, or completed */}
+              {/* Approvers can upload attachments even when form is read-only */}
+              {/* ODHC approvers need to upload attachments when status is department_approved (after Step 1 approval) */}
+              {id && (user?.role === 'department_approver' || user?.role === 'super_administrator') && formData.status && ['submitted', 'returned', 'department_approved', 'completed'].includes(formData.status) && (
+                <div className="mb-4">
+                  <label className="block text-xs font-semibold text-gray-700 mb-2">
+                    Upload Files
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <label className="flex items-center px-4 py-2 bg-gray-100 border border-gray-300 rounded cursor-pointer hover:bg-gray-200 text-sm">
+                      <Paperclip className="h-4 w-4 mr-2" />
+                      {uploadingFiles ? 'Uploading...' : 'Choose Files'}
+                      <input
+                        type="file"
+                        multiple
+                        onChange={handleFileUpload}
+                        disabled={uploadingFiles || loading}
+                        className="hidden"
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.zip,.rar"
+                      />
+                    </label>
+                    <span className="text-xs text-gray-500">Max 10MB per file</span>
+                  </div>
+                </div>
+              )}
+
+              {attachments.length > 0 ? (
+                <div className="space-y-2">
+                  {attachments.map((attachment, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded">
+                      <div className="flex items-center space-x-3 flex-1">
+                        <Paperclip className="h-4 w-4 text-gray-500" />
+                        <div className="flex-1 min-w-0">
+                          <a
+                            href={`${window.location.protocol}//${window.location.hostname}:3001${attachment.path}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-blue-600 hover:underline truncate block"
+                          >
+                            {attachment.originalName || attachment.filename}
+                          </a>
+                          <span className="text-xs text-gray-500">
+                            {formatFileSize(attachment.size || 0)}
+                          </span>
+                        </div>
+                      </div>
+                      {/* Only show delete button for approvers (department_approver) and super_administrator */}
+                      {/* Approvers can delete attachments even when form is read-only */}
+                      {id && (user?.role === 'department_approver' || user?.role === 'super_administrator') && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAttachment(attachment.filename)}
+                          disabled={loading}
+                          className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50"
+                          title="Delete attachment"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500 italic">No attachments</p>
+              )}
+      </div>
+
+      {/* Action Buttons */}
+            <div className="flex justify-end space-x-4 pt-6 border-t-2 border-gray-400 mt-8">
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={loading}
+                className="px-6 py-2 border-2 border-gray-400 rounded text-gray-700 hover:bg-gray-50 text-sm font-semibold disabled:opacity-50"
+          >
+                {isViewing ? 'Back' : 'Cancel'}
+          </button>
+
+              {/* Show edit/submit buttons for requestor when: creating, editing, or viewing returned requests */}
+              {user?.role === 'requestor' && (isCreating || isEditing || isReturnedAndCanEdit) && (
                 <>
-                  <button
-                    type="button"
-                    onClick={handleSaveDraft}
-                    disabled={loading}
+          <button
+            type="button"
+            onClick={handleSaveDraft}
+            disabled={loading}
                     className="flex items-center px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50 text-sm font-semibold"
-                  >
+          >
                     <Save className="h-4 w-4 mr-2" />
-                    Save Draft
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSubmit}
-                    disabled={loading}
+            Save Draft
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={loading}
                     className="flex items-center px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 text-sm font-semibold"
-                  >
-                    <Send className="h-4 w-4 mr-2" />
-                    Submit Request
-                  </button>
+          >
+                    {loading ? <Loader className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+            {formData.status === 'returned' ? 'Resubmit Request' : 'Submit Request'}
+          </button>
                 </>
               )}
 
-              {/* HR/Admin Actions */}
-              {id && (user?.role === "hr_manager" || user?.role === "admin") && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleReturn}
+              {/* ODHC (Department Approver) Actions - Only for vehicle requests */}
+              {(() => {
+                // Allow approval/return/decline for: submitted, returned, and department_approved (for Step 2 approvers)
+                // Also allow for any workflow intermediate statuses
+                const canApprove = isViewing && 
+                  (user?.role === "department_approver" || user?.role === "super_administrator") && 
+                  (formData.status === "submitted" || formData.status === "returned" || formData.status === "department_approved" || 
+                   (formData.status && formData.status !== "completed" && formData.status !== "declined" && formData.status !== "draft"));
+                if (isViewing && (user?.role === "department_approver" || user?.role === "super_administrator")) {
+                  console.log("Approval button check - isViewing:", isViewing, "role:", user?.role, "status:", formData.status, "canApprove:", canApprove);
+                }
+                return canApprove;
+              })() && (
+            <>
+              <button
+                type="button"
+                onClick={handleReturn}
                     disabled={loading}
                     className="flex items-center px-6 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50 text-sm font-semibold"
-                  >
+              >
                     <RotateCcw className="h-4 w-4 mr-2" />
-                    Return
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDecline}
+                Return
+              </button>
+              <button
+                type="button"
+                onClick={handleDecline}
                     disabled={loading}
                     className="flex items-center px-6 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 text-sm font-semibold"
-                  >
+              >
                     <XCircle className="h-4 w-4 mr-2" />
-                    Decline
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleApprove}
-                    disabled={loading}
-                    className="flex items-center px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 text-sm font-semibold"
-                  >
+                Decline
+              </button>
+              <button
+                type="button"
+                onClick={handleApprove}
+                    disabled={loading || (isODHCUser && !(formData.assigned_driver && formData.assigned_driver.trim() && formData.assigned_vehicle && formData.assigned_vehicle.trim() && formData.approval_date))}
+                    className="flex items-center px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold"
+                    title={(isODHCUser && !(formData.assigned_driver && formData.assigned_driver.trim() && formData.assigned_vehicle && formData.assigned_vehicle.trim() && formData.approval_date)) ? "Please complete Section 4 (Assigned Driver, Assigned Vehicle, and Approval Date) before approving" : ""}
+              >
                     <CheckCircle className="h-4 w-4 mr-2" />
-                    Approve
-                  </button>
-                </>
+                    Approve & Complete
+              </button>
+            </>
               )}
             </div>
           </form>
