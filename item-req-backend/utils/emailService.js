@@ -216,7 +216,7 @@ class EmailService {
           <div class="footer">
             <p>This is an automated notification. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #2563eb; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #2563eb; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
@@ -661,7 +661,7 @@ class EmailService {
           <div class="footer">
             <p>This is an automated message. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #2563eb; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #2563eb; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
@@ -720,13 +720,13 @@ class EmailService {
             
             <p>Please review and approve or decline this request in the system.</p>
             <p style="margin-top: 15px;">
-              <a href="http://172.16.33.27:5173/login" style="display: inline-block; padding: 10px 20px; background-color: #dc2626; color: white; text-decoration: none; border-radius: 5px;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="display: inline-block; padding: 10px 20px; background-color: #dc2626; color: white; text-decoration: none; border-radius: 5px;">Access Login Portal</a>
             </p>
           </div>
           <div class="footer">
             <p>This is an automated message. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #dc2626; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #dc2626; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
@@ -800,7 +800,7 @@ class EmailService {
           <div class="footer">
             <p>This is an automated message. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #16a34a; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #16a34a; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
@@ -854,7 +854,7 @@ class EmailService {
           <div class="footer">
             <p>This is an automated message. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #dc2626; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #dc2626; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
@@ -908,7 +908,7 @@ class EmailService {
           <div class="footer">
             <p>This is an automated message. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #f59e0b; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #f59e0b; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
@@ -972,7 +972,7 @@ class EmailService {
           <div class="footer">
             <p>This is an automated message. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #3b82f6; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #3b82f6; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
