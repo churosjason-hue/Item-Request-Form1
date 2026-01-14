@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import VehicleManagement from './VehicleManagement';
+import DriverManagement from './DriverManagement';
 import { 
   ArrowLeft, 
   Plus, 
@@ -804,6 +806,8 @@ export default function WorkflowSettings() {
           </div>
         )}
       </div>
+      <VehicleManagement className= 'mb-6' />
+      <DriverManagement />
     </div>
   );
 }

@@ -191,5 +191,23 @@ export const workflowsAPI = {
   getActive: (formType) => api.get(`/workflows/active/${formType}`),
   getAllUsers: () => api.get('/workflows/users'), // Get all users for workflow configuration
 }
+ //Vehicle Management API
+ export const vehicleManagementApi = {
+  getAll: (params) => api.get('/vehicles', { params }),
+  getById: (id) => api.get(`/vehicles/${id}`),
+ create: (data) => api.post('/vehicles', data ),
+  update: (id, data) => api.put(`/vehicles/${id}`, data ),
+  delete: (id) => api.delete(`/vehicles/${id}`),
+  updateAvailability: (id, data) => api.patch(`/vehicles/${id}/availability`, data ),
+  getAvailable: () => api.get('/vehicles/available' ),
+ }
+//Driver Management API
+export const driverManagementApi = {
+  getAll: (params) => api.get('/drivers', { params }),
+  getById: (id) => api.get(`/drivers/${id}`),
+  create: (data) => api.post('/drivers', data),
+  update: (id, data) => api.put(`/drivers/${id}`, data),
+  delete: (id) => api.delete(`/drivers/${id}`),
+}
 
 export default api;

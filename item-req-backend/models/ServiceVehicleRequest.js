@@ -138,9 +138,9 @@ const ServiceVehicleRequest = sequelize.define('ServiceVehicleRequest', {
     comment: 'Name of the assigned driver (manual input)'
   },
   assigned_vehicle: {
-    type: DataTypes.STRING(100),
+    type: DataTypes.INTEGER,
     allowNull: true,
-    comment: 'Assigned vehicle plate number or ID'
+    comment: 'Assigned vehicle ID  '
   },
   status: {
     type: DataTypes.STRING(50),

@@ -7,6 +7,7 @@ import {
   Department,
   VehicleApproval,
   WorkflowStep,
+  Vehicle,
   sequelize,
 } from "../models/index.js";
 import { authenticateToken, requireRole } from "../middleware/auth.js";
@@ -1025,12 +1026,16 @@ router.post(
           });
         }
 
-        if (!request.assigned_vehicle || !request.assigned_vehicle.trim()) {
-          return res.status(400).json({
-            success: false,
-            message: "Please fill in the Assigned Vehicle field in Section 4 before approving",
-          });
-        }
+  if (
+  request.assigned_vehicle === null ||
+  request.assigned_vehicle === undefined
+) {
+  return res.status(400).json({
+    success: false,
+    message: "Please fill in the Assigned Vehicle field in Section 4 before approving",
+  });
+}
+
 
         if (!request.approval_date) {
           return res.status(400).json({
@@ -1533,8 +1538,21 @@ router.post(
         });
       }
 
+      // Validate and get vehicle if provided
+      let vehicleId = null;
+      if (assigned_vehicle) {
+        const vehicle = await Vehicle.findByPk(parseInt(assigned_vehicle));
+        if (!vehicle) {
+          return res.status(404).json({
+            success: false,
+            message: "Vehicle not found",
+          });
+        }
+        vehicleId = parseInt(assigned_vehicle);  
+      }
+
       request.assigned_driver = assigned_driver;
-      request.assigned_vehicle = assigned_vehicle;
+      request.assigned_vehicle = vehicleId;
       
       // Update approval_date if provided
       if (req.body.approval_date) {

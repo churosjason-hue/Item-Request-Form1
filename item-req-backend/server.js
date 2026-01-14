@@ -15,6 +15,8 @@ import requestRoutes from './routes/requests.js';
 import departmentRoutes from './routes/departments.js';
 import svrRoutes from './routes/serviceVehicleRequests.js';
 import workflowRoutes from './routes/workflows.js';
+import vehicleRoutes from './routes/vehicles.js';
+import driverRoutes from './routes/drivers.js';
 
 // Import database
 import { sequelize } from './config/database.js';
@@ -79,6 +81,8 @@ app.use('/api/requests', requestRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/service-vehicle-requests', svrRoutes);
 app.use('/api/workflows', workflowRoutes);
+app.use('/api/vehicles', vehicleRoutes);
+app.use('/api/drivers', driverRoutes);
 // Option 1: Serve frontend static files from backend (Single Port Deployment)
 // This allows the backend to serve both API and frontend from the same port
 // Works in both development and production - just needs the dist folder to exist

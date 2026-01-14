@@ -8,6 +8,8 @@ import ServiceVehicleRequest from './ServiceVehicleRequest.js';
 import ApprovalWorkflow from './ApprovalWorkflow.js';
 import WorkflowStep from './WorkflowStep.js';
 import VehicleApproval from './VehicleApproval.js';
+import Vehicle from './Vehicle.js';
+import Driver from './Driver.js';
  
 // Define associations
  
@@ -190,7 +192,9 @@ export {
   ServiceVehicleRequest,
   ApprovalWorkflow,
   WorkflowStep,
-  VehicleApproval
+  VehicleApproval,
+  Vehicle,
+  Driver
 };
  
 // Sync database function

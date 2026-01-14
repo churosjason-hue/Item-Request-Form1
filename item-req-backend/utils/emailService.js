@@ -271,7 +271,7 @@ class EmailService {
           <div class="footer">
             <p>This is an automated notification. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #f59e0b; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #f59e0b; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
@@ -334,7 +334,7 @@ class EmailService {
           <div class="footer">
             <p>This is an automated notification. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #10b981; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #10b981; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
@@ -388,7 +388,7 @@ class EmailService {
           <div class="footer">
             <p>This is an automated notification. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #ef4444; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #ef4444; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
@@ -441,7 +441,7 @@ class EmailService {
           <div class="footer">
             <p>This is an automated notification. Please do not reply to this email.</p>
             <p style="margin-top: 10px;">
-              <a href="http://172.16.33.27:5173/login" style="color: #f59e0b; text-decoration: underline;">Access Login Portal</a>
+              <a href="${process.env.FRONTEND_URL}/login" style="color: #f59e0b; text-decoration: underline;">Access Login Portal</a>
             </p>
           </div>
         </div>
