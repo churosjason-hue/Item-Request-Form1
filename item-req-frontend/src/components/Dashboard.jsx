@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import STC_LOGO from "../assets/STC_LOGO.png";
 
 import {
@@ -52,6 +54,142 @@ const Dashboard = () => {
     pages: 0,
     currentPage: 1
   });
+  const [selectedVehicleRequests, setSelectedVehicleRequests] = useState(new Set());
+
+  const isODHC = user?.department?.name?.toUpperCase()?.includes('ODHC') || user?.role === 'super_administrator';
+
+  const toggleRequestSelection = (requestId) => {
+    const newSelected = new Set(selectedVehicleRequests);
+    if (newSelected.has(requestId)) {
+      newSelected.delete(requestId);
+    } else {
+      newSelected.add(requestId);
+    }
+    setSelectedVehicleRequests(newSelected);
+  };
+
+  const handleGenerateTripTicket = () => {
+    if (selectedVehicleRequests.size === 0) return;
+
+    const doc = new jsPDF('l', 'mm', 'a4'); // Landscape, millimeters, A4
+    const selectedData = vehicleRequests.filter(req => selectedVehicleRequests.has(req.id || req.request_id));
+
+    // Add Logo
+    const imgProps = doc.getImageProperties(STC_LOGO);
+    const imgWidth = 40;
+    const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
+    doc.addImage(STC_LOGO, 'PNG', 14, 10, imgWidth, imgHeight);
+
+    // Title
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text("BATCH TRAVEL ITINERARY", 297 / 2, 20, { align: "center" });
+
+    // Form ID
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    doc.text("HRD-FM-072 rev.02 080625", 280, 10, { align: "right" });
+
+    // Table Data
+    const tableBody = selectedData.map(req => {
+      // Format dates
+      const dateFrom = req.travel_date_from ? new Date(req.travel_date_from).toLocaleDateString() : '-';
+      const dateTo = req.travel_date_to ? new Date(req.travel_date_to).toLocaleDateString() : '-';
+
+      // Vehicle Details
+      // The backend now includes AssignedVehicle model.
+      // If req.AssignedVehicle exists, use it.
+      // Otherwise fallback to fields if any (though currently vehicle details are in the model)
+      const vehicle = req.AssignedVehicle || {};
+      const vehicleMakeModel = vehicle.make && vehicle.model ? `${vehicle.make} ${vehicle.model}` : (req.destination_car || '-');
+      const plateNumber = vehicle.plate || '-';
+      // Driver: assigned_driver is a string text in ServiceVehicleRequest
+      const driver = req.assigned_driver || '-';
+
+      // Passenger Name: check passenger_name field or passengers array
+      let passengerName = req.passenger_name || '-';
+      if ((!passengerName || passengerName === '-') && req.passengers && Array.isArray(req.passengers) && req.passengers.length > 0) {
+        passengerName = req.passengers.map(p => p.name).join(', ');
+      }
+
+      return [
+        req.reference_code || `SVR-${req.id}`,
+        req.request_type ? req.request_type.replace(/_/g, ' ').toUpperCase() : '-',
+        dateFrom,
+        dateTo,
+        req.pick_up_location || req.destination || req.destination_car || '-', // Destination / Pick-up Point (Context dependent, but form says Destination/Pick-up)
+        req.pick_up_time || req.departure_time || '-', // Departure / Pick-up Time
+        req.drop_off_location || '-',
+        passengerName,
+        vehicleMakeModel,
+        plateNumber,
+        driver
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 35,
+      head: [[
+        { content: 'APPROVAL REFERNCE CODE', rowSpan: 2, styles: { valign: 'middle', halign: 'center' } },
+        { content: 'REQUEST TYPE', rowSpan: 2, styles: { valign: 'middle', halign: 'center' } },
+        { content: 'TRAVEL DATE', colSpan: 2, styles: { halign: 'center' } },
+        { content: 'DESTINATION / PICK-UP POINT', rowSpan: 2, styles: { valign: 'middle', halign: 'center' } },
+        { content: 'DEPARTURE / PICK-UP TIME', rowSpan: 2, styles: { valign: 'middle', halign: 'center' } },
+        { content: 'DROP-OFF POINT', rowSpan: 2, styles: { valign: 'middle', halign: 'center' } },
+        { content: 'NAME OF PASSENGER', rowSpan: 2, styles: { valign: 'middle', halign: 'center' } },
+        { content: 'VEHICLE DETAILS', colSpan: 3, styles: { halign: 'center' } }
+      ], [
+        { content: '(FROM)', styles: { halign: 'center' } },
+        { content: '(TO)', styles: { halign: 'center' } },
+        { content: 'MAKE/MODEL', styles: { halign: 'center' } },
+        { content: 'PLATE NUMBER', styles: { halign: 'center' } },
+        { content: 'DRIVER', styles: { halign: 'center' } }
+      ]],
+      body: tableBody,
+      theme: 'grid',
+      headStyles: { fillColor: [0, 112, 192], textColor: 255, fontSize: 7, fontStyle: 'bold', lineWidth: 0.1 },
+      bodyStyles: { fontSize: 7, cellPadding: 2 },
+      styles: { overflow: 'linebreak', cellWidth: 'wrap' },
+      columnStyles: {
+        0: { cellWidth: 25 },
+        1: { cellWidth: 25 },
+        2: { cellWidth: 15 },
+        3: { cellWidth: 15 },
+        4: { cellWidth: 30 },
+        5: { cellWidth: 15 },
+        6: { cellWidth: 30 },
+        7: { cellWidth: 30 },
+        8: { cellWidth: 20 },
+        9: { cellWidth: 20 },
+        10: { cellWidth: 25 }
+      }
+    });
+
+    // Footer - To be accomplished by Security
+    const finalY = doc.lastAutoTable.finalY + 10;
+
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    doc.text("To be accomplished by Security", 14, finalY);
+
+    autoTable(doc, {
+      startY: finalY + 2,
+      head: [[
+        'TIME OUT', 'KILOMETER READING (OUT)', 'TIME IN', 'KILOMETER READING (IN)'
+      ]],
+      body: [['', '', '', '']],
+      theme: 'grid',
+      headStyles: { fillColor: [40, 167, 69], textColor: 255, fontSize: 8, halign: 'center' },
+      bodyStyles: { minCellHeight: 10 }
+    });
+
+    // Signatures
+    const sigY = doc.lastAutoTable.finalY + 20;
+    doc.text("PREPARED BY:", 14, sigY);
+    doc.text("APPROVED BY:", 100, sigY);
+
+    doc.save(`Trip_Ticket_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
 
   const isSundayInRange = (start, end) => {
     if (!start || !end) return false;
@@ -497,6 +635,16 @@ const Dashboard = () => {
                 </button>
               </>
             )}
+
+            {activeTab === 'vehicle' && isODHC && selectedVehicleRequests.size > 0 && (
+              <button
+                onClick={handleGenerateTripTicket}
+                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Generate Trip Ticket ({selectedVehicleRequests.size})
+              </button>
+            )}
           </div>
 
           {/* Filters and Sorting */}
@@ -580,6 +728,25 @@ const Dashboard = () => {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  {activeTab === 'vehicle' && isODHC && (
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-4">
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              const allIds = new Set(vehicleRequests.map(r => r.id || r.request_id));
+                              setSelectedVehicleRequests(allIds);
+                            } else {
+                              setSelectedVehicleRequests(new Set());
+                            }
+                          }}
+                          checked={vehicleRequests.length > 0 && selectedVehicleRequests.size === vehicleRequests.length}
+                        />
+                      </div>
+                    </th>
+                  )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     {activeTab === 'item' ? 'Request' : 'Reference Code'}
                   </th>
@@ -684,7 +851,7 @@ const Dashboard = () => {
                 ) : (
                   vehicleRequests.length === 0 ? (
                     <tr>
-                      <td colSpan="6" className="px-6 py-12 text-center text-gray-500">
+                      <td colSpan={isODHC ? 7 : 6} className="px-6 py-12 text-center text-gray-500">
                         <Car className="h-12 w-12 mx-auto text-gray-300 mb-4" />
                         <p>No vehicle requests found</p>
                         {user.role === 'requestor' && (
@@ -711,6 +878,16 @@ const Dashboard = () => {
 
                       return (
                         <tr key={request.id || request.request_id} className={`hover:bg-gray-50 ${isAssignedVerifier ? 'bg-purple-50' : ''}`}>
+                          {activeTab === 'vehicle' && isODHC && (
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                checked={selectedVehicleRequests.has(request.id || request.request_id)}
+                                onChange={() => toggleRequestSelection(request.id || request.request_id)}
+                              />
+                            </td>
+                          )}
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div>
                               <div className="text-sm font-medium text-gray-900 flex items-center gap-2">

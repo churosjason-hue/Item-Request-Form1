@@ -118,6 +118,12 @@ Department.hasMany(ServiceVehicleRequest, {
   as: 'ServiceVehicleRequests'
 });
 
+// ServiceVehicleRequest - Vehicle associations
+ServiceVehicleRequest.belongsTo(Vehicle, {
+  foreignKey: 'assigned_vehicle',
+  as: 'AssignedVehicle'
+});
+
 // ApprovalWorkflow - User associations
 ApprovalWorkflow.belongsTo(User, {
   foreignKey: 'created_by',

@@ -399,6 +399,10 @@ router.get("/", authenticateToken, async (req, res) => {
           order: [['step_order', 'ASC']],
           required: false
         },
+        {
+          model: Vehicle,
+          as: "AssignedVehicle",
+        },
       ],
       offset,
       limit: parseInt(limit),
@@ -524,6 +528,10 @@ router.get("/:id", authenticateToken, async (req, res) => {
           model: User,
           as: "Verifier",
           attributes: ["id", "first_name", "last_name"]
+        },
+        {
+          model: Vehicle,
+          as: "AssignedVehicle",
         },
       ],
     });
