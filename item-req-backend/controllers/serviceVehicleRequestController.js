@@ -82,7 +82,7 @@ export const getAllRequests = async (req, res) => {
             // Check if user is from ODHC department
             const odhcDepartment = await Department.findOne({
                 where: {
-                    name: { [Op.iLike]: '%ODHC%' },
+                    is_vehicle_steward: true,
                     is_active: true,
                 },
             });
@@ -326,7 +326,7 @@ export const getRequestById = async (req, res) => {
             // Check if user is from ODHC department
             const odhcDepartment = await Department.findOne({
                 where: {
-                    name: { [Op.iLike]: '%ODHC%' },
+                    is_vehicle_steward: true,
                     is_active: true,
                 },
             });
@@ -516,7 +516,7 @@ export const updateRequest = async (req, res) => {
         const canEdit =
             (req.user.id === request.requested_by &&
                 ["draft", "returned"].includes(request.status)) ||
-            ["it_manager", "super_administrator"].includes(req.user.role);
+            ["it_manager", "super_administrator", "department_approver"].includes(req.user.role);
 
         if (!canEdit) {
             return res.status(403).json({
@@ -731,7 +731,7 @@ export const submitRequest = async (req, res) => {
             // Find ODHC department approver (vehicle requests go to ODHC, not requestor's department)
             const odhcDepartment = await Department.findOne({
                 where: {
-                    name: { [Op.iLike]: '%ODHC%' }, // Case-insensitive search for ODHC department
+                    is_vehicle_steward: true, // Use flag instead of hardcoded name
                     is_active: true,
                 },
             });
@@ -1265,7 +1265,7 @@ export const declineRequest = async (req, res) => {
 export const returnRequest = async (req, res) => {
     try {
         const { id } = req.params;
-        const { reason } = req.body;
+        const { reason, returnTo } = req.body;
 
         if (!reason || reason.trim() === "") {
             return res.status(400).json({
@@ -1313,7 +1313,7 @@ export const returnRequest = async (req, res) => {
             current_step_id: request.current_step_id // Phase 1: Pass explicit step ID
         });
 
-        // Create or update VehicleApproval record for return
+        // Create or update VehicleApproval record for return (History for CURRENT step)
         if (currentStep) {
             let vehicleApproval = await VehicleApproval.findOne({
                 where: {
@@ -1331,22 +1331,49 @@ export const returnRequest = async (req, res) => {
                     step_name: currentStep.step_name,
                     status: 'returned',
                     return_reason: reason || null,
+                    return_to: returnTo || 'requestor', // Save where it was returned to
                     returned_at: new Date()
                 });
             } else {
                 vehicleApproval.returnForRevision(reason || null);
                 vehicleApproval.approver_id = req.user.id;
+                vehicleApproval.return_to = returnTo || 'requestor';
                 await vehicleApproval.save();
             }
-            console.log(`✅ Created/updated VehicleApproval record for return at step ${currentStep.step_order}`);
         }
 
-        request.status = "returned";
-        request.comments = reason;
-        // Phase 1: Clear step ID as workflow is sent back to start
-        request.current_step_id = null;
-        // Phase 3: Clear pending approvers
-        request.pending_approver_ids = [];
+        // Handle Return Logic
+        if (returnTo === 'step_1' && workflow && workflow.Steps.length > 0) {
+            // Logic to return to Step 1 (Department Approver)
+            // Step 1 usually results in status 'submitted' (pending step 1) or 'department_approved' (completed step 1) behavior?
+            // Actually, if we return TO step 1, we want the request to be PENDING at Step 1.
+            // Step 1 corresponds to 'submitted' status usually in this workflow.
+
+            // Find Step 1
+            const step1 = workflow.Steps.find(s => s.step_order === 1);
+            if (step1) {
+                request.status = 'submitted'; // Reset to submitted so Step 1 can pick it up
+                request.current_step_id = step1.id;
+                request.comments = reason;
+
+                // We should notify Step 1 approvers
+                // Re-calculate approvers for Step 1
+                // ... logic to notify would be good here
+            } else {
+                // Fallback
+                request.status = "returned";
+                request.current_step_id = null;
+            }
+        } else {
+            // Default: Return to Requestor
+            request.status = "returned";
+            request.comments = reason;
+            // Clear step ID as workflow is sent back to start
+            request.current_step_id = null;
+            // Clear pending approvers
+            request.pending_approver_ids = [];
+        }
+
         await request.save();
 
         // Convert Sequelize instance to plain object for email service
@@ -1416,7 +1443,7 @@ export const assignVehicle = async (req, res) => {
         // Check if user is from ODHC department
         const odhcDepartment = await Department.findOne({
             where: {
-                name: { [Op.iLike]: '%ODHC%' },
+                is_vehicle_steward: true,
                 is_active: true,
             },
         });

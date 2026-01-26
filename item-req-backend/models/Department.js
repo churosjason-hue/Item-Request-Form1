@@ -42,6 +42,12 @@ const Department = sequelize.define('Department', {
     type: DataTypes.DATE,
     allowNull: true,
     comment: 'Last time department was synced from AD'
+  },
+  is_vehicle_steward: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    allowNull: false,
+    comment: 'Flag to indicate if this department manages service vehicles (e.g., ODHC)'
   }
 }, {
   tableName: 'departments',

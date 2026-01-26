@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from "react";
+import { useContext, useState, useEffect } from "react";
 import {
   ArrowLeft,
   Plus,
   UserCheck,
-  PenTool,
   Trash2,
   AlertCircle,
   Save,
@@ -18,6 +17,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { ToastContext } from "../contexts/ToastContext";
 import { validateServiceVehicleForm } from "../helpers/validations";
 import STC_LOGO from "../assets/STC_LOGO.png";
 import {
@@ -26,9 +26,16 @@ import {
   vehicleManagementApi,
   driverManagementApi,
 } from "../services/api";
-import SignatureModal from "./SignatureModal";
+
+import ConfirmDialog from "./ConfirmDialog";
+import ActionModal from "./ActionModal";
+import ReturnRequestModal from "./ReturnRequestModal";
 import VerifierAssignmentModal from "./VerifierAssignmentModal";
 import VerificationResponseModal from "./VerificationResponseModal";
+import PassengerList from "./service-vehicle/PassengerList";
+import TripDetails from "./service-vehicle/TripDetails";
+import SignatureSection from "./service-vehicle/SignatureSection";
+import GeneralServicesSection from "./service-vehicle/GeneralServicesSection";
 
 const REQUEST_TYPE_OPTIONS = [
   { value: "drop_passenger_only", label: "Drop Passenger Only" },
@@ -46,6 +53,7 @@ export default function ServiceVehicleRequestForm() {
   const navigate = useNavigate();
   const { id } = useParams();
   const { user } = useAuth();
+  const { success: toastSuccess, error: toastError, warning: toastWarning } = useContext(ToastContext);
   const location = useLocation();
 
 
@@ -99,13 +107,20 @@ export default function ServiceVehicleRequestForm() {
   const [availableDrivers, setAvailableDrivers] = useState([]);
   const [showJustificationModal, setShowJustificationModal] = useState(false);
   const [justificationReason, setJustificationReason] = useState("");
-  const [showRequestorSignatureModal, setShowRequestorSignatureModal] = useState(false);
-  const [tempRequestorSignature, setTempRequestorSignature] = useState("");
+  // Signature modal state moved to SignatureSection component
   const [showVerifierModal, setShowVerifierModal] = useState(false);
   const [bookedResources, setBookedResources] = useState({ vehicleIds: [], driverNames: [] });
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [showVerificationActionModal, setShowVerificationActionModal] = useState(false);
+
   const [verificationAction, setVerificationAction] = useState(null);
+
+  // New Modal States
+  const [confirmDialogState, setConfirmDialogState] = useState({ isOpen: false, title: "", message: "", onConfirm: () => { }, variant: "warning", confirmText: "Confirm" });
+  const [actionModalState, setActionModalState] = useState({ isOpen: false, title: "", message: "", onConfirm: () => { }, variant: "primary", inputType: "text", inputLabel: "" });
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnOptions, setReturnOptions] = useState([]);
+
 
   const isEditing = location.pathname.includes("/edit/");
   const isViewing = !!id && !isEditing;
@@ -344,7 +359,7 @@ export default function ServiceVehicleRequestForm() {
       }
     } catch (error) {
       console.error("Error loading form data:", error);
-      alert("Error loading request data");
+      toastError("Error loading request data");
     } finally {
       setLoading(false);
     }
@@ -408,7 +423,7 @@ export default function ServiceVehicleRequestForm() {
 
   const handleJustificationSubmit = () => {
     if (!justificationReason.trim()) {
-      alert("Please provide a justification for the same-day request.");
+      toastWarning("Please provide a justification for the same-day request.");
       return;
     }
     setFormData(prev => ({ ...prev, urgency_justification: justificationReason }));
@@ -509,7 +524,7 @@ export default function ServiceVehicleRequestForm() {
       // Now submit the request (this will trigger email notifications)
       if (requestId) {
         await serviceVehicleRequestsAPI.submit(requestId);
-        setSuccessMessage("Service Vehicle Request submitted successfully!");
+        toastSuccess("Service Vehicle Request submitted successfully!");
       } else {
         throw new Error("Failed to get request ID after creation");
       }
@@ -520,12 +535,9 @@ export default function ServiceVehicleRequestForm() {
     } catch (error) {
       console.error("Error submitting form:", error);
 
-      const errorMessage =
-        error.response?.data?.message ||
-        error.response?.data?.errors?.[0]?.msg ||
-        error.message ||
-        "Error submitting request. Please try again.";
+      "Error submitting request. Please try again.";
 
+      toastError(errorMessage);
       setErrors({ submit: errorMessage });
     } finally {
       setLoading(false);
@@ -544,7 +556,7 @@ export default function ServiceVehicleRequestForm() {
         // Update existing draft
         await serviceVehicleRequestsAPI.update(id, dataToSave);
         requestId = id;
-        setSuccessMessage("Draft updated successfully!");
+        toastSuccess("Draft updated successfully!");
       } else {
         // Create new draft
         const response = await serviceVehicleRequestsAPI.create(dataToSave);
@@ -552,7 +564,7 @@ export default function ServiceVehicleRequestForm() {
           response.data?.request?.id ||
           response.data?.request?.request_id ||
           response.data?.id;
-        setSuccessMessage("Form saved as draft successfully!");
+        toastSuccess("Form saved as draft successfully!");
       }
 
       // Upload pending files if any
@@ -602,7 +614,7 @@ export default function ServiceVehicleRequestForm() {
     try {
       setLoading(true);
       await serviceVehicleRequestsAPI.assignVerifier(id, { verifier_id: verifierId });
-      setSuccessMessage('Verifier assigned successfully');
+      toastSuccess('Verifier assigned successfully');
       setShowVerifierModal(false);
       setTimeout(() => navigate('/dashboard'), 1500);
     } catch (err) {
@@ -624,7 +636,7 @@ export default function ServiceVehicleRequestForm() {
         status: verificationAction === 'verify' ? 'verified' : 'declined',
         comments
       });
-      setSuccessMessage(`Request ${verificationAction === 'verify' ? 'verified' : 'declined'}`);
+      toastSuccess(`Request ${verificationAction === 'verify' ? 'verified' : 'declined'}`);
       setShowVerificationActionModal(false);
       setTimeout(() => navigate('/dashboard'), 1500);
     } catch (err) {
@@ -642,8 +654,7 @@ export default function ServiceVehicleRequestForm() {
     // If no id yet (new request), store files for later upload
     if (!id) {
       setPendingFiles((prev) => [...prev, ...files]);
-      setSuccessMessage(`${files.length} file(s) selected. They will be uploaded when you save the request.`);
-      setTimeout(() => setSuccessMessage(""), 3000);
+      toastSuccess(`${files.length} file(s) selected. They will be uploaded when you save the request.`);
       event.target.value = ""; // Reset file input
       return;
     }
@@ -655,19 +666,19 @@ export default function ServiceVehicleRequestForm() {
     if (isRequestor) {
       // Requestors can upload attachments when status is draft or returned
       if (!["draft", "returned"].includes(formData.status)) {
-        alert("You can only upload attachments when the request is in draft or returned status");
+        toastWarning("You can only upload attachments when the request is in draft or returned status");
         event.target.value = ""; // Reset file input
         return;
       }
     } else if (isApprover) {
       // Approvers can upload attachments for submitted, returned, department_approved, or completed requests
       if (!["submitted", "returned", "department_approved", "completed"].includes(formData.status)) {
-        alert("Attachments can only be uploaded for submitted, returned, department_approved, or completed requests");
+        toastWarning("Attachments can only be uploaded for submitted, returned, department_approved, or completed requests");
         event.target.value = ""; // Reset file input
         return;
       }
     } else {
-      alert("You do not have permission to upload attachments");
+      toastWarning("You do not have permission to upload attachments");
       event.target.value = ""; // Reset file input
       return;
     }
@@ -686,12 +697,11 @@ export default function ServiceVehicleRequestForm() {
 
       if (response.data.success) {
         setAttachments((prev) => [...prev, ...response.data.attachments]);
-        setSuccessMessage("Files uploaded successfully!");
-        setTimeout(() => setSuccessMessage(""), 3000);
+        toastSuccess("Files uploaded successfully!");
       }
     } catch (error) {
       console.error("Error uploading files:", error);
-      alert(error.response?.data?.message || "Error uploading files");
+      toastError(error.response?.data?.message || "Error uploading files");
     } finally {
       setUploadingFiles(false);
       event.target.value = ""; // Reset file input
@@ -701,22 +711,27 @@ export default function ServiceVehicleRequestForm() {
   const handleDeleteAttachment = async (filename) => {
     if (!id) return;
 
-    if (!window.confirm("Are you sure you want to delete this attachment?")) {
-      return;
-    }
-
-    try {
-      setLoading(true);
-      await serviceVehicleRequestsAPI.deleteAttachment(id, filename);
-      setAttachments((prev) => prev.filter((att) => att.filename !== filename));
-      setSuccessMessage("Attachment deleted successfully!");
-      setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (error) {
-      console.error("Error deleting attachment:", error);
-      alert(error.response?.data?.message || "Error deleting attachment");
-    } finally {
-      setLoading(false);
-    }
+    setConfirmDialogState({
+      isOpen: true,
+      title: "Delete Attachment",
+      message: "Are you sure you want to delete this attachment?",
+      variant: "danger",
+      confirmText: "Delete",
+      onConfirm: async () => {
+        setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
+        try {
+          setLoading(true);
+          await serviceVehicleRequestsAPI.deleteAttachment(id, filename);
+          setAttachments((prev) => prev.filter((att) => att.filename !== filename));
+          toastSuccess("Attachment deleted successfully!");
+        } catch (error) {
+          console.error("Error deleting attachment:", error);
+          toastError(error.response?.data?.message || "Error deleting attachment");
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
   };
 
   const handleRemovePendingFile = (index) => {
@@ -733,7 +748,7 @@ export default function ServiceVehicleRequestForm() {
 
   const handleSaveSection4 = async () => {
     if (!id) {
-      alert("Please save the request first before updating Section 4");
+      toastWarning("Please save the request first before updating Section 4");
       return;
     }
 
@@ -751,73 +766,77 @@ export default function ServiceVehicleRequestForm() {
       // Use the assign endpoint or update endpoint
       await serviceVehicleRequestsAPI.assign(id, section4Data);
 
-      setSuccessMessage("Section 4 updated successfully!");
+      toastSuccess("Section 4 updated successfully!");
 
       // Reload form data to get updated values
       await loadFormData(id);
-
-      setTimeout(() => {
-        setSuccessMessage("");
-      }, 3000);
     } catch (error) {
-      console.error("Error saving Section 4:", error);
-      alert(error.response?.data?.message || "Error saving Section 4");
+      console.error("Error save Section 4:", error);
+      toastError(error.response?.data?.message || "Error saving Section 4");
     } finally {
       setLoading(false);
     }
   };
 
   const handleCancel = () => {
-    const confirmCancel = window.confirm(
-      "Are you sure you want to cancel? Any unsaved changes will be lost."
-    );
-    if (confirmCancel) {
-      navigate("/dashboard");
-    }
+    setConfirmDialogState({
+      isOpen: true,
+      title: "Cancel Changes",
+      message: "Are you sure you want to cancel? Any unsaved changes will be lost.",
+      variant: "warning",
+      confirmText: "Yes, Cancel",
+      onConfirm: () => {
+        setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
+        navigate("/dashboard");
+      }
+    });
   };
 
   const handleDelete = async () => {
-    const confirmDelete = window.confirm(
-      "Are you sure you want to delete this draft? This action cannot be undone."
-    );
-    if (confirmDelete) {
-      try {
-        setLoading(true);
-        if (id) {
-          await serviceVehicleRequestsAPI.delete(id);
+    setConfirmDialogState({
+      isOpen: true,
+      title: "Delete Draft",
+      message: "Are you sure you want to delete this draft? This action cannot be undone.",
+      variant: "danger",
+      confirmText: "Delete Forever",
+      onConfirm: async () => {
+        setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
+        try {
+          setLoading(true);
+          if (id) {
+            await serviceVehicleRequestsAPI.delete(id);
+          }
+          toastSuccess("Draft deleted successfully!");
+          navigate("/dashboard");
+        } catch (error) {
+          console.error("Error deleting draft:", error);
+          toastError(error.response?.data?.message || "Error deleting draft");
+        } finally {
+          setLoading(false);
         }
-        alert("Draft deleted successfully!");
-        navigate("/dashboard");
-      } catch (error) {
-        console.error("Error deleting draft:", error);
-        alert(error.response?.data?.message || "Error deleting draft");
-      } finally {
-        setLoading(false);
       }
-    }
+    });
   };
 
   const handleApprove = async () => {
     // Validate Section 4 fields before approval ONLY if user is ODHC
     if (isODHCUser) {
       if (!formData.assigned_driver || !formData.assigned_driver.trim()) {
-        alert(
+        toastWarning(
           "Please fill in the Assigned Driver field in Section 4 before approving."
         );
         return;
       }
 
       if (!formData.assigned_vehicle) {
-        alert(
+        toastWarning(
           "Please fill in the Assigned Vehicle field in Section 4 before approving."
         );
         return;
       }
 
       if (!formData.approval_date) {
-        alert(
-          "Please fill in the Approval Date field in Section 4 before approving."
-        );
+        toastWarning("Please fill in the Approval Date field in Section 4 before approving.");
         return;
       }
 
@@ -830,377 +849,127 @@ export default function ServiceVehicleRequestForm() {
           await new Promise((resolve) => setTimeout(resolve, 500));
         } catch (error) {
           console.error("Error saving Section 4:", error);
-          alert("Error saving Section 4. Please try again.");
+          toastError("Error saving Section 4. Please try again.");
           setLoading(false);
           return;
         }
       }
     }
     try {
+      setActionModalState({
+        isOpen: true,
+        title: "Approve Request",
+        message: "Please provide approval remarks (optional):",
+        inputLabel: "Remarks",
+        inputType: "textarea",
+        confirmText: "Approve",
+        variant: "success",
+        allowEmpty: true,
+        onConfirm: async (approvalReason) => {
+          setActionModalState(prev => ({ ...prev, isOpen: false }));
+          setLoading(true);
+
+          // Ensure assigned_vehicle is sent as a number or null
+          const approvalData = {
+            remarks: approvalReason || "",
+            assigned_vehicle: formData.assigned_vehicle
+              ? parseInt(formData.assigned_vehicle)
+              : null,
+          };
+
+          try {
+            if (id) await serviceVehicleRequestsAPI.update(id, approvalData);
+
+            // Call approve endpoint
+            await serviceVehicleRequestsAPI.approve(id, { remarks: approvalReason || "" });
+
+            toastSuccess("Request approved and completed successfully!");
+            setTimeout(() => {
+              navigate("/dashboard");
+            }, 2000);
+          } catch (error) {
+            console.error("Error approving request:", error);
+            toastError(error.response?.data?.message || "Error approving request");
+          } finally {
+            setLoading(false);
+          }
+        }
+      });
+    } catch (error) {
+      console.error("Error showing approve modal:", error);
+    }
+  };
+
+  const handleReturn = async () => {
+    // Default option
+    const options = [{ label: "Return to Requestor", value: "requestor" }];
+
+    // Logic to add 'Return to Previous Step' if applicable
+    // For now, hardcode logic based on status or known workflow
+    if (formData.status === 'department_approved') {
+      // If we were at a later stage, we could return to department approval
+      options.push({ label: "Return to Department Approver", value: "step_1" });
+    }
+
+    setReturnOptions(options);
+    setShowReturnModal(true);
+  };
+
+  const onReturnConfirm = async (returnReason, returnTo) => {
+    setShowReturnModal(false);
+    try {
       setLoading(true);
-      const approvalReason = prompt(
-        "Please provide approval remarks (optional):"
-      );
-
-      // Ensure assigned_vehicle is sent as a number or null
-      const approvalData = {
-        remarks: approvalReason || "",
-        assigned_vehicle: formData.assigned_vehicle
-          ? parseInt(formData.assigned_vehicle)
-          : null,
-      };
-
-      await serviceVehicleRequestsAPI.approve(id, approvalData);
-
-      setSuccessMessage("Request approved and completed successfully!");
+      await serviceVehicleRequestsAPI.return(id, {
+        reason: returnReason,
+        // Phase 2: returnTo: returnTo 
+      });
+      toastSuccess("Request returned successfully!");
       setTimeout(() => {
         navigate("/dashboard");
-      }, 2000);
+      }, 1500);
     } catch (error) {
-      console.error("Error approving request:", error);
-      alert(error.response?.data?.message || "Error approving request");
+      console.error("Error returning request:", error);
+      toastError(error.response?.data?.message || "Error returning request");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleReturn = async () => {
-    const reason = prompt(
-      "Please provide a reason for returning this request:"
-    );
-    if (reason) {
-      try {
-        setLoading(true);
-        await serviceVehicleRequestsAPI.return(id, { reason });
-        setSuccessMessage("Request returned successfully!");
-        setTimeout(() => {
-          navigate("/dashboard");
-        }, 2000);
-      } catch (error) {
-        console.error("Error returning request:", error);
-        alert(error.response?.data?.message || "Error returning request");
-      } finally {
-        setLoading(false);
-      }
-    }
-  };
-
   const handleDecline = async () => {
-    const reason = prompt(
-      "Please provide a reason for declining this request:"
-    );
-    if (reason) {
-      try {
-        setLoading(true);
-        await serviceVehicleRequestsAPI.decline(id, { reason });
-        setSuccessMessage("Request declined successfully!");
-        setTimeout(() => {
-          navigate("/dashboard");
-        }, 2000);
-      } catch (error) {
-        console.error("Error declining request:", error);
-        alert(error.response?.data?.message || "Error declining request");
-      } finally {
-        setLoading(false);
+    setActionModalState({
+      isOpen: true,
+      title: "Decline Request",
+      message: "Please provide reason for declining:",
+      inputLabel: "Reason",
+      inputType: "textarea",
+      confirmText: "Decline Request",
+      variant: "danger",
+      onConfirm: async (declineReason) => {
+        if (!declineReason) {
+          toastWarning("Reason is required to decline request.");
+          return;
+        }
+        setActionModalState(prev => ({ ...prev, isOpen: false }));
+        try {
+          setLoading(true);
+          await serviceVehicleRequestsAPI.decline(id, {
+            reason: declineReason,
+          });
+          toastSuccess("Request declined successfully!");
+          setTimeout(() => {
+            navigate("/dashboard");
+          }, 1500);
+        } catch (error) {
+          console.error("Error declining request:", error);
+          toastError(error.response?.data?.message || "Error declining request");
+        } finally {
+          setLoading(false);
+        }
       }
-    }
+    });
   };
 
-  // Dynamic conditional section
-  const getConditionalConfig = () => {
-    const configs = {
-      drop_passenger_only: {
-        title: "ACCOMPLISH THIS PART IF REQUEST IS DROP PASSENGER ONLY",
-        fields: [
-          {
-            name: "pick_up_location",
-            label: "Pick-Up Location",
-            type: "text",
-            span: 1,
-          },
-          {
-            name: "pick_up_time",
-            label: "Pick-Up Time",
-            type: "time",
-            span: 1,
-          },
-          {
-            name: "drop_off_location",
-            label: "Drop-Off Location",
-            type: "text",
-            span: 1,
-          },
-          {
-            name: "drop_off_time",
-            label: "Drop-Off Time",
-            type: "time",
-            span: 1,
-          },
-        ],
-        showPassengers: true,
-      },
-      passenger_pickup_only: {
-        title: "ACCOMPLISH THIS PART IF REQUEST IS PASSENGER PICK-UP ONLY",
-        fields: [
-          {
-            name: "pick_up_location",
-            label: "Pick-Up Location",
-            type: "text",
-            span: 1,
-          },
-          {
-            name: "pick_up_time",
-            label: "Pick-Up Time",
-            type: "time",
-            span: 1,
-          },
-          {
-            name: "drop_off_location",
-            label: "Drop-Off Location",
-            type: "text",
-            span: 1,
-          },
-        ],
-        showPassengers: true,
-        passengerLabel: "Passengers to Pick Up",
-      },
-      item_pickup: {
-        title: "ACCOMPLISH THIS PART IF REQUEST IS ITEM PICK-UP",
-        fields: [
-          {
-            name: "pick_up_location",
-            label: "Pick-Up Location",
-            type: "text",
-            span: 1,
-          },
-          {
-            name: "pick_up_time",
-            label: "Pick-Up Time",
-            type: "time",
-            span: 1,
-          },
-          {
-            name: "drop_off_location",
-            label: "Drop-Off Location",
-            type: "text",
-            span: 1,
-          },
-          {
-            name: "drop_off_time",
-            label: "Drop-Off Time",
-            type: "time",
-            span: 1,
-          },
-        ],
-        showPassengers: false,
-      },
-      item_delivery: {
-        title: "ACCOMPLISH THIS PART IF REQUEST IS ITEM DELIVERY",
-        fields: [
-          {
-            name: "pick_up_location",
-            label: "Pick-Up Location",
-            type: "text",
-            span: 1,
-          },
-          {
-            name: "pick_up_time",
-            label: "Pick-Up Time",
-            type: "time",
-            span: 1,
-          },
-          {
-            name: "drop_off_location",
-            label: "Drop-Off Location",
-            type: "text",
-            span: 1,
-          },
-          {
-            name: "drop_off_time",
-            label: "Drop-Off Time",
-            type: "time",
-            span: 1,
-          },
-        ],
-        showPassengers: false,
-      },
-      point_to_point_service: {
-        title: "ACCOMPLISH THIS PART IF REQUEST IS POINT-TO-POINT",
-        fields: [
-          {
-            name: "pick_up_location",
-            label: "Pick-Up Location",
-            type: "text",
-            span: 1,
-          },
-          {
-            name: "pick_up_time",
-            label: "Pick-Up Time",
-            type: "time",
-            span: 1,
-          },
-          {
-            name: "drop_off_location",
-            label: "Drop-Off Location",
-            type: "text",
-            span: 1,
-          },
-          {
-            name: "drop_off_time",
-            label: "Drop-Off Time",
-            type: "time",
-            span: 1,
-          },
-          { name: "destination", label: "Destination", type: "text", span: 2 },
-          {
-            name: "departure_time",
-            label: "Departure Time",
-            type: "time",
-            span: 1,
-          },
-        ],
-        showPassengers: true,
-        passengerLabel: "Passengers",
-      },
-      car_only: {
-        title: "ACCOMPLISH THIS PART IF REQUEST IS CAR ONLY",
-        fields: [
-          {
-            name: "destination_car",
-            label: "Destination / Car Use",
-            type: "text",
-            span: 2,
-          },
-        ],
-        showPassengers: false,
-      },
-    };
-    return configs[formData.request_type] || null;
-  };
-
-  const renderConditionalSection = () => {
-    const config = getConditionalConfig();
-    if (!config) return null;
-
-    return (
-      <div className="space-y-4">
-        <div className="bg-gray-50 p-3 border border-gray-300">
-          <h3 className="text-xs font-bold text-gray-900 mb-3">
-            {config.title}
-          </h3>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
-            {config.fields.map((field) => (
-              <div
-                key={field.name}
-                className={field.span === 2 ? "col-span-1 md:col-span-2" : ""}
-              >
-                <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  {field.label} <span className="text-red-600">*</span>
-                </label>
-                <div
-                  className={`border-b-2 pb-1 print:border-b-0 ${errors[field.name] ? "border-red-500" : "border-gray-400"
-                    }`}
-                >
-                  <input
-                    type={field.type}
-                    name={field.name}
-                    value={formData[field.name] || ""}
-                    {...getInputProps({
-                      onChange: handleChange,
-                      className:
-                        "w-full bg-transparent border-0 focus:outline-none text-sm",
-                      disabled: loading,
-                    })}
-                  />
-                </div>
-                {errors[field.name] && (
-                  <p className="text-red-500 text-xs mt-1">
-                    {errors[field.name]}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Passengers Section */}
-          {config.showPassengers && (
-            <div className="border-t border-gray-300 pt-4 mt-4">
-              <div className="flex justify-between items-center mb-3">
-                <h3 className="text-xs font-bold text-gray-900">
-                  {config.passengerLabel || "Passengers"}
-                </h3>
-                {!isViewing && (
-                  <button
-                    type="button"
-                    onClick={addPassenger}
-                    disabled={loading}
-                    className="flex items-center gap-1 text-blue-600 hover:text-blue-800 text-sm no-print"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Add Passenger
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {(formData.passengers || []).map((passenger, index) => (
-                  <div
-                    key={index}
-                    className="bg-gray-50 p-3 border border-gray-300"
-                  >
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-xs font-semibold text-gray-700">
-                        Passenger {index + 1}
-                      </span>
-                      {!isViewing && (formData.passengers || []).length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removePassenger(index)}
-                          disabled={loading}
-                          className="text-red-600 hover:text-red-800 no-print"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-2">
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">
-                          Name <span className="text-red-600">*</span>
-                        </label>
-                        <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                          <input
-                            type="text"
-                            value={passenger.name}
-                            {...getInputProps({
-                              onChange: (e) =>
-                                handlePassengerChange(
-                                  index,
-                                  "name",
-                                  e.target.value
-                                ),
-                              className:
-                                "w-full bg-transparent border-0 focus:outline-none text-sm",
-                              disabled: loading,
-                            })}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {errors.passengers && (
-                <p className="text-red-500 text-xs mt-1">{errors.passengers}</p>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
+  // getConditionalConfig and renderConditionalSection moved to TripDetails component
 
   const isCreating = !id;
 
@@ -1667,7 +1436,21 @@ export default function ServiceVehicleRequestForm() {
               </div>
 
               {/* Dynamic Conditional Section */}
-              {formData.request_type && renderConditionalSection()}
+              {formData.request_type && (
+                <TripDetails
+                  formData={formData}
+                  errors={errors}
+                  loading={loading}
+                  isViewing={isViewing}
+                  getInputProps={getInputProps}
+                  handleChange={handleChange}
+                  passengerActions={{
+                    add: addPassenger,
+                    remove: removePassenger,
+                    change: (index, field, value) => handlePassengerChange(index, field, value)
+                  }}
+                />
+              )}
             </div>
 
             {/* Section 3: Driver's License Information - Only for car_only request type */}
@@ -1774,247 +1557,32 @@ export default function ServiceVehicleRequestForm() {
             )}
 
             {/* Section 3: Requestor Signature */}
-            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
-              <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
-                <h2 className="text-sm font-bold text-gray-900 uppercase">
-                  Section 3: Requestor Signature
-                </h2>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Name and Signature
-                  </label>
-                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0 min-h-[40px] flex items-end">
-                    {formData.requestor_signature ? (
-                      <div className="w-full">
-                        <div
-                          className={`mb-0 ${!isReadOnly && (user?.id === formData.requested_by || !id) ? "cursor-pointer group relative" : ""}`}
-                          onClick={() => {
-                            if (!isReadOnly && (user?.id === formData.requested_by || !id)) {
-                              setTempRequestorSignature(formData.requestor_signature);
-                              setShowRequestorSignatureModal(true);
-                            }
-                          }}
-                        >
-                          <img
-                            src={formData.requestor_signature}
-                            alt="Signature"
-                            className="h-10 object-contain -mb-4 relative z-10"
-                          />
-                          {!isReadOnly && (user?.id === formData.requested_by || !id) && (
-                            <span className="block text-[10px] text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">Click to edit</span>
-                          )}
-                        </div>
-                        <p className="text-sm text-gray-900 -mt-2 leading-tight relative z-0">{formData.requestor_name}</p>
-                      </div>
-                    ) : (
-                      <div
-                        className={`w-full flex items-center justify-between ${!isReadOnly && (user?.id === formData.requested_by || !id) ? "cursor-pointer hover:bg-gray-50 p-1 rounded" : ""}`}
-                        onClick={() => {
-                          if (!isReadOnly && (user?.id === formData.requested_by || !id)) {
-                            setTempRequestorSignature("");
-                            setShowRequestorSignatureModal(true);
-                          }
-                        }}
-                      >
-                        <span className="text-sm text-gray-900">{formData.requestor_name || "Select to Sign"}</span>
-                        {!isReadOnly && (user?.id === formData.requested_by || !id) && (
-                          <PenTool className="h-4 w-4 text-gray-400" />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Date
-                  </label>
-                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                    <input
-                      type="date"
-                      name="requested_by_date"
-                      value={formData.requested_by_date || ""}
-                      readOnly
-                      className="w-full bg-transparent border-0 focus:outline-none text-sm text-center"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
+            <SignatureSection
+              formData={formData}
+              user={user}
+              id={id}
+              isReadOnly={isReadOnly}
+              onSignatureSave={(signature) => setFormData(prev => ({ ...prev, requestor_signature: signature }))}
+            />
 
             {/* Section 4: General Services Section */}
-            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
-              <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
-                <h2 className="text-sm font-bold text-gray-900 uppercase">
-                  Section 4: To Be Accomplished by OD & Human Capital – General
-                  Services
-                </h2>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Reference Code
-                  </label>
-                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                    <div className="text-sm text-gray-500">
-                      {formData.reference_code || "-"}
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Assigned Driver
-                  </label>
-                  {isODHCUser && (isViewing || isEditing) ? (
-                    <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                      <select
-                        name="assigned_driver"
-                        value={formData.assigned_driver || ""}
-                        onChange={handleChange}
-                        disabled={
-                          loading || getRecommendedVehicles().length === 0
-                        }
-                        className="w-full bg-transparent border-0 focus:outline-none text-sm text-center"
-                      >
-                        <option value="">Select a driver</option>
-                        {availableDrivers.map((driver) => {
-                          const isAvailable = isDriverAvailable(driver.name);
-                          return (
-                            <option
-                              key={driver.id}
-                              value={driver.name}
-                              disabled={!isAvailable}
-                              className={!isAvailable ? "text-gray-400 bg-gray-100" : ""}
-                            >
-                              {driver.name} - {driver.license_number}
-                              {!isAvailable ? " (Unavailable)" : ""}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                      <div className="text-sm text-gray-500">
-                        {formData.assigned_driver || "-"}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Approval Date
-                  </label>
-                  {isODHCUser && (isViewing || isEditing) ? (
-                    <input
-                      type="date"
-                      name="approval_date"
-                      value={formData.approval_date || ""}
-                      onChange={handleChange}
-                      disabled={loading}
-                      className="w-full bg-transparent border-b-2 border-gray-400 pb-1 print:border-b-0 focus:outline-none text-sm text-center"
-                    />
-                  ) : (
-                    <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                      <div className="text-sm text-gray-500">
-                        {formData.approval_date
-                          ? new Date(
-                            formData.approval_date
-                          ).toLocaleDateString()
-                          : "-"}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Assigned Vehicle
-                  </label>
-                  {isODHCUser && (isViewing || isEditing) ? (
-                    <div>
-                      <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                        <select
-                          name="assigned_vehicle"
-                          value={formData.assigned_vehicle || ""}
-                          onChange={handleChange}
-                          disabled={
-                            loading || getRecommendedVehicles().length === 0
-                          }
-                          className="w-full bg-transparent border-0 focus:outline-none text-sm text-center"
-                        >
-                          <option value="">Select a vehicle</option>
-                          {getRecommendedVehicles().map((vehicle) => {
-                            const isRecommended = isVehicleRecommended(
-                              vehicle.id
-                            );
-                            return (
-                              <option
-                                key={vehicle.id}
-                                value={vehicle.id}
-                                disabled={!isVehicleAvailable(vehicle.id)}
-                                className={!isVehicleAvailable(vehicle.id) ? "text-gray-400 bg-gray-100" : ""}
-                              >
-                                {vehicle.plate} - {vehicle.year} {vehicle.make}{" "}
-                                {vehicle.model} ({vehicle.seaters} seaters)
-                                {isRecommended ? " - Recommended ✓" : ""}
-                                {!isVehicleAvailable(vehicle.id) ? " (Unavailable)" : ""}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-                      {getAvailableVehiclesMessage()}
-                    </div>
-                  ) : (
-                    <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                      <div className="text-sm text-gray-500">
-                        {selectedVehicle
-                          ? `${selectedVehicle.plate} - ${selectedVehicle.year} ${selectedVehicle.make} ${selectedVehicle.model} (${selectedVehicle.seaters} seaters)`
-                          : formData.assigned_vehicle
-                            ? (() => {
-                              const vehicle = availableVehicles.find(
-                                (v) =>
-                                  v.id === parseInt(formData.assigned_vehicle)
-                              );
-                              return vehicle
-                                ? `${vehicle.plate} - ${vehicle.year} ${vehicle.make} ${vehicle.model} (${vehicle.seaters} seaters)`
-                                : "-";
-                            })()
-                            : "-"}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-              {isODHCUser && (isViewing || isEditing) && (
-                <div className="mt-4">
-                  {!(
-                    formData.assigned_driver &&
-                    formData.assigned_driver.trim() &&
-                    formData.assigned_vehicle &&
-                    formData.approval_date
-                  ) &&
-                    formData.status === "submitted" && (
-                      <div className="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
-                        <strong> Action Required:</strong> Please complete
-                        Section 4 (Assigned Driver, Assigned Vehicle, and
-                        Approval Date) before approving this request.
-                      </div>
-                    )}
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={handleSaveSection4}
-                      disabled={loading}
-                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-semibold disabled:opacity-50"
-                    >
-                      {loading ? "Saving..." : "Save Section 4"}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+            <GeneralServicesSection
+              formData={formData}
+              isODHCUser={isODHCUser}
+              isViewing={isViewing}
+              isEditing={isEditing}
+              loading={loading}
+              availableDrivers={availableDrivers}
+              getRecommendedVehicles={getRecommendedVehicles}
+              getAvailableVehiclesMessage={getAvailableVehiclesMessage}
+              isDriverAvailable={isDriverAvailable}
+              isVehicleAvailable={isVehicleAvailable}
+              isVehicleRecommended={isVehicleRecommended}
+              selectedVehicle={selectedVehicle}
+              availableVehicles={availableVehicles}
+              handleChange={handleChange}
+              handleSaveSection4={handleSaveSection4}
+            />
 
             {/* Attachments Section */}
             <div className="border border-gray-400 p-4 mb-6 no-print">
@@ -2332,22 +1900,7 @@ export default function ServiceVehicleRequestForm() {
           </form>
         </div>
       </div>
-      <SignatureModal
-        isOpen={showRequestorSignatureModal}
-        onClose={() => {
-          setShowRequestorSignatureModal(false);
-          setTempRequestorSignature('');
-        }}
-        value={tempRequestorSignature}
-        onChange={(signature) => setTempRequestorSignature(signature)}
-        approverName={formData.requestor_name}
-        approverTitle="Requestor"
-        label="Requestor E-Signature"
-        onSave={() => {
-          setFormData(prev => ({ ...prev, requestor_signature: tempRequestorSignature }));
-          setShowRequestorSignatureModal(false);
-        }}
-      />
+
 
       <VerifierAssignmentModal
         isOpen={showVerifierModal}
@@ -2402,6 +1955,37 @@ export default function ServiceVehicleRequestForm() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={confirmDialogState.isOpen}
+        onClose={() => setConfirmDialogState(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmDialogState.onConfirm}
+        title={confirmDialogState.title}
+        message={confirmDialogState.message}
+        variant={confirmDialogState.variant}
+        confirmText={confirmDialogState.confirmText}
+      />
+
+      <ActionModal
+        isOpen={actionModalState.isOpen}
+        onClose={() => setActionModalState(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={actionModalState.onConfirm}
+        title={actionModalState.title}
+        message={actionModalState.message}
+        inputLabel={actionModalState.inputLabel}
+        inputType={actionModalState.inputType}
+        variant={actionModalState.variant}
+        confirmText={actionModalState.confirmText}
+        allowEmpty={actionModalState.allowEmpty}
+        options={actionModalState.options}
+      />
+      <ReturnRequestModal
+        isOpen={showReturnModal}
+        onClose={() => setShowReturnModal(false)}
+        onConfirm={onReturnConfirm}
+        returnOptions={returnOptions}
+        loading={loading}
+      />
     </div>
   );
 }

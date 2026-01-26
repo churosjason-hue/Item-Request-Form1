@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
-// import rateLimit from 'express-rate-limit'; // Removed for development
+import rateLimit from 'express-rate-limit'; // Enabled for security
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import os from 'os';
@@ -31,12 +31,12 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Rate limiting - DISABLED for development
-// const limiter = rateLimit({
-//   windowMs: 15 * 60 * 1000, // 15 minutes
-//   max: 100, // limit each IP to 100 requests per windowMs
-//   message: 'Too many requests from this IP, please try again later.'
-// });
+// Rate limiting - Enabled for security
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.'
+});
 
 // Middleware
 // Configure Helmet to work with CORS - disable crossOriginResourcePolicy for API
@@ -59,7 +59,7 @@ app.use(cors({
 // Handle preflight requests explicitly
 app.options('*', cors());
 
-// app.use(limiter); // Disabled for development
+app.use(limiter); // Enabled for security
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
