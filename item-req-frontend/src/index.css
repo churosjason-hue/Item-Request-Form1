@@ -8,7 +8,7 @@
   font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  
+
   color-scheme: light;
   color: #213547;
   background-color: #ffffff;
@@ -19,11 +19,17 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root[class='dark'] {
+  color-scheme: dark;
+  color: #f3f4f6;
+  background-color: #111827;
+}
+
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background-color: #f9fafb;
+  @apply bg-gray-50 dark:bg-gray-900 transition-colors duration-200;
 }
 
 * {
@@ -81,7 +87,8 @@ table {
   border-collapse: collapse;
 }
 
-th, td {
+th,
+td {
   border: 1px solid #d1d5db;
 }
 
@@ -91,30 +98,36 @@ th, td {
     background-color: white !important;
     color: black !important;
   }
-  
+
   .no-print {
     display: none !important;
   }
-  
+
   .print-break {
     page-break-after: always;
   }
-  
+
   .print-break-inside-avoid {
     page-break-inside: avoid;
   }
-  
+
   /* Ensure form elements are visible in print */
-  input, select, textarea {
-    border: 1px solid #9ca3af !important;
+  input,
+  select,
+  textarea {
+    border: none !important;
     background-color: white !important;
     -webkit-appearance: none;
     -moz-appearance: none;
     appearance: none;
+    padding: 0 !important;
+    margin: 0 !important;
   }
-  
+
   /* Print table borders */
-  table, th, td {
+  table,
+  th,
+  td {
     border: 1px solid #9ca3af !important;
   }
 }

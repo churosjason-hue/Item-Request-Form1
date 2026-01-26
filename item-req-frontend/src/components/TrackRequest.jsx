@@ -12,7 +12,7 @@ const TrackRequest = () => {
 
   const handleSearch = async (e) => {
     e.preventDefault();
-    
+
     if (!ticketCode.trim()) {
       setError('Please enter a ticket code');
       return;
@@ -24,11 +24,11 @@ const TrackRequest = () => {
 
     try {
       const code = ticketCode.trim();
-      
+
       // Try to determine request type based on code format
       // REQ-* = Item request, SVR-* = Vehicle request
       let response;
-      
+
       if (code.startsWith('SVR-')) {
         // Vehicle request
         try {
@@ -130,26 +130,26 @@ const TrackRequest = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 p-4 transition-colors duration-200">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8 pt-8">
           <div className="mx-auto h-20 w-20 bg-blue-600 rounded-full flex items-center justify-center mb-4">
             <Package className="text-white w-10 h-10" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
             Track Your Request
           </h1>
-          <p className="text-gray-600">
+          <p className="text-gray-600 dark:text-gray-400">
             Enter your ticket code to view the status of your IT equipment or vehicle request
           </p>
         </div>
 
         {/* Search Form */}
-        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-6 transition-colors duration-200">
           <form onSubmit={handleSearch} className="space-y-4">
             <div>
-              <label htmlFor="ticketCode" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="ticketCode" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 Ticket Code
               </label>
               <div className="flex gap-3">
@@ -162,7 +162,7 @@ const TrackRequest = () => {
                     setError('');
                   }}
                   placeholder="e.g., REQ-20240106-123456 or SVR-20240106-123456"
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
                   disabled={loading}
                 />
                 <button
@@ -208,7 +208,7 @@ const TrackRequest = () => {
         {requestData && (
           <div className="space-y-6">
             {/* Summary Card */}
-            <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 transition-colors duration-200">
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <div className="flex items-center gap-2 mb-2">
@@ -217,7 +217,7 @@ const TrackRequest = () => {
                     ) : (
                       <Package className="w-6 h-6 text-blue-600" />
                     )}
-                    <h2 className="text-2xl font-bold text-gray-900">
+                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
                       {requestData.ticketCode}
                     </h2>
                     {requestData.requestType === 'vehicle' && (
@@ -226,7 +226,7 @@ const TrackRequest = () => {
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 text-sm text-gray-600">
+                  <div className="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-400">
                     <span>Submitted by: <strong>{requestData.submittedBy}</strong></span>
                     {requestData.department && (
                       <span className="px-2 py-1 bg-gray-100 rounded">
@@ -255,13 +255,13 @@ const TrackRequest = () => {
                 </p>
                 <p className="text-sm text-gray-600 mt-1">
                   <strong>Submitted:</strong> {
-                    requestData.status === 'draft' 
+                    requestData.status === 'draft'
                       ? 'Not submitted yet'
-                      : (requestData.submittedDate 
-                          ? formatDate(requestData.submittedDate) 
-                          : (requestData.timeline?.[0]?.timestamp 
-                              ? formatDate(requestData.timeline[0].timestamp) 
-                              : 'Date not available'))
+                      : (requestData.submittedDate
+                        ? formatDate(requestData.submittedDate)
+                        : (requestData.timeline?.[0]?.timestamp
+                          ? formatDate(requestData.timeline[0].timestamp)
+                          : 'Date not available'))
                   }
                 </p>
                 {requestData.requestType === 'vehicle' && requestData.vehicleDetails && (
@@ -296,8 +296,8 @@ const TrackRequest = () => {
             </div>
 
             {/* Timeline */}
-            <div className="bg-white rounded-lg shadow-lg p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Request Timeline</h3>
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 transition-colors duration-200">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Request Timeline</h3>
               <div className="space-y-4">
                 {requestData.timeline.map((event, index) => (
                   <div key={index} className="flex gap-4">
@@ -308,7 +308,7 @@ const TrackRequest = () => {
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            <h4 className={`font-medium ${event.isPending ? 'text-yellow-900' : 'text-gray-900'}`}>
+                            <h4 className={`font-medium ${event.isPending ? 'text-yellow-900' : 'text-gray-900 dark:text-white'}`}>
                               {event.status}
                             </h4>
                             {event.isPending && (
@@ -361,8 +361,8 @@ const TrackRequest = () => {
 
             {/* Items Requested (only for item requests) */}
             {requestData.requestType !== 'vehicle' && requestData.items && (
-              <div className="bg-white rounded-lg shadow-lg p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Items Requested</h3>
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 transition-colors duration-200">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Items Requested</h3>
                 <div className="space-y-3">
                   {requestData.items.map((item, index) => (
                     <div key={index} className="p-4 bg-gray-50 rounded-lg">

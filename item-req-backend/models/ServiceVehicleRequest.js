@@ -23,6 +23,21 @@ const ServiceVehicleRequest = sequelize.define('ServiceVehicleRequest', {
       key: 'id'
     }
   },
+  current_step_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'workflow_steps',
+      key: 'id'
+    },
+    comment: 'ID of the current workflow step'
+  },
+  pending_approver_ids: {
+    type: DataTypes.ARRAY(DataTypes.INTEGER),
+    allowNull: true,
+    defaultValue: [],
+    comment: 'Array of user IDs who can currently approve this request'
+  },
   contact_number: {
     type: DataTypes.STRING(20),
     allowNull: true,

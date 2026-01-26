@@ -27,14 +27,20 @@ import {
   ArrowDown,
   Bell,
   Calendar,
-  UserCheck
+  UserCheck,
+  Moon,
+  Sun,
+  Trash2,
+  Shield
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { requestsAPI, REQUEST_STATUSES, serviceVehicleRequestsAPI } from '../services/api';
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user, logout, canViewAllRequests, canManageUsers, isAdmin } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [activeTab, setActiveTab] = useState('item'); // 'item' or 'vehicle'
   const [requests, setRequests] = useState([]);
   const [vehicleRequests, setVehicleRequests] = useState([]);
@@ -45,7 +51,7 @@ const Dashboard = () => {
     status: '',
     search: '',
     page: 1,
-    limit: 5, // Display 5 requests per page
+    limit: 10, // Display 10 requests per page
     sortBy: 'date', // 'date', 'status', 'requestor'
     sortOrder: 'desc' // 'asc' or 'desc'
   });
@@ -66,6 +72,26 @@ const Dashboard = () => {
       newSelected.add(requestId);
     }
     setSelectedVehicleRequests(newSelected);
+  };
+
+  const handleDelete = async (id, type) => {
+    if (!window.confirm('Are you sure you want to delete this request? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      if (type === 'item') {
+        await requestsAPI.delete(id);
+      } else {
+        await serviceVehicleRequestsAPI.delete(id);
+      }
+
+      // Refresh
+      loadDashboardData();
+    } catch (error) {
+      console.error('Error deleting request:', error);
+      alert('Failed to delete request: ' + (error.response?.data?.message || error.message));
+    }
   };
 
   const handleGenerateTripTicket = () => {
@@ -258,7 +284,7 @@ const Dashboard = () => {
         // Build query parameters with pagination and sorting
         const queryParams = {
           ...filters,
-          limit: filters.limit || 5,
+          limit: filters.limit || 10,
           page: filters.page || 1,
           sortBy: filters.sortBy || 'date',
           sortOrder: filters.sortOrder || 'desc'
@@ -288,7 +314,7 @@ const Dashboard = () => {
         // Build query parameters with pagination and sorting
         const queryParams = {
           ...filters,
-          limit: filters.limit || 5,
+          limit: filters.limit || 10,
           page: filters.page || 1,
           sortBy: filters.sortBy || 'date',
           sortOrder: filters.sortOrder || 'desc'
@@ -485,28 +511,35 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b">
+      <header className="bg-white dark:bg-gray-800 shadow-sm border-b dark:border-gray-700 transition-colors duration-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
                 <img src={STC_LOGO} alt="STC Logo" className="h-8 w-8" />
                 <div>
-                  <div className="font-semibold text-gray-900">General Services Request System</div>
-                  <div className="text-xs text-gray-500">Styrotech Corporation</div>
+                  <div className="font-semibold text-gray-900 dark:text-white">General Services Request System</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">Styrotech Corporation</div>
                 </div>
               </div>
             </div>
 
             <div className="flex items-center space-x-4">
               <div className="text-right">
-                <div className="text-sm font-medium text-gray-900">{user.fullName}</div>
-                <div className="text-xs text-gray-500">{user.role.replace('_', ' ').toUpperCase()}</div>
+                <div className="text-sm font-medium text-gray-900 dark:text-white">{user.fullName}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{user.role.replace('_', ' ').toUpperCase()}</div>
               </div>
 
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={toggleTheme}
+                  className="p-2 text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-200"
+                  title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                >
+                  {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                </button>
                 {canManageUsers() && (
                   <button
                     onClick={() => navigate('/users')}
@@ -538,6 +571,13 @@ const Dashboard = () => {
                     >
                       <Settings className="h-5 w-5" />
                     </button>
+                    <button
+                      onClick={() => navigate('/audit-logs')}
+                      className="p-2 text-gray-400 hover:text-gray-600"
+                      title="Audit Logs"
+                    >
+                      <Shield className="h-5 w-5" />
+                    </button>
                   </>
                 )}
 
@@ -557,16 +597,16 @@ const Dashboard = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Welcome Section */}
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
             Welcome back, {user.firstName}!
           </h1>
-          <p className="text-gray-600">
+          <p className="text-gray-600 dark:text-gray-300">
             {user.department?.name} • {user.title}
           </p>
         </div>
 
         {/* Tabs */}
-        <div className="mb-6 border-b border-gray-200">
+        <div className="mb-6 border-b border-gray-200 dark:border-gray-700">
           <nav className="-mb-px flex space-x-8">
             <button
               onClick={() => setActiveTab('item')}
@@ -606,14 +646,14 @@ const Dashboard = () => {
             };
 
             return (
-              <div key={index} className="bg-white rounded-lg shadow p-6">
+              <div key={index} className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 transition-colors duration-200">
                 <div className="flex items-center">
                   <div className={`p-2 rounded-md ${colorClasses[card.color]}`}>
                     <Icon className="h-6 w-6 text-white" />
                   </div>
                   <div className="ml-4">
-                    <p className="text-sm font-medium text-gray-600">{card.title}</p>
-                    <p className="text-2xl font-semibold text-gray-900">{card.count}</p>
+                    <p className="text-sm font-medium text-gray-600 dark:text-gray-400">{card.title}</p>
+                    <p className="text-2xl font-semibold text-gray-900 dark:text-white">{card.count}</p>
                   </div>
                 </div>
               </div>
@@ -656,14 +696,14 @@ const Dashboard = () => {
                 placeholder="Search requests..."
                 value={filters.search}
                 onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value, page: 1 }))}
-                className="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
               />
             </div>
 
             <select
               value={filters.status}
               onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value, page: 1 }))}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
             >
               <option value="">All Status</option>
               {activeTab === 'item' ? (
@@ -689,7 +729,7 @@ const Dashboard = () => {
             <select
               value={filters.sortBy}
               onChange={(e) => setFilters(prev => ({ ...prev, sortBy: e.target.value, page: 1 }))}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
             >
               <option value="date">Sort by Date</option>
               <option value="status">Sort by Status</option>
@@ -703,7 +743,7 @@ const Dashboard = () => {
                 sortOrder: prev.sortOrder === 'asc' ? 'desc' : 'asc',
                 page: 1
               }))}
-              className="px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50 flex items-center space-x-1"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white flex items-center space-x-1"
               title={`Sort ${filters.sortOrder === 'asc' ? 'Descending' : 'Ascending'}`}
             >
               {filters.sortOrder === 'asc' ? (
@@ -717,16 +757,16 @@ const Dashboard = () => {
         </div>
 
         {/* Requests Table */}
-        <div className="bg-white shadow rounded-lg overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">
+        <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden transition-colors duration-200">
+          <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-lg font-medium text-gray-900 dark:text-white">
               Recent {activeTab === 'item' ? 'Item' : 'Vehicle'} Requests
             </h2>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-700/50">
                 <tr>
                   {activeTab === 'vehicle' && isODHC && (
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-4">
@@ -768,12 +808,12 @@ const Dashboard = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Date
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {activeTab === 'item' ? (
                   requests.length === 0 ? (
                     <tr>
@@ -792,10 +832,10 @@ const Dashboard = () => {
                     </tr>
                   ) : (
                     requests.map((request) => (
-                      <tr key={request.id} className="hover:bg-gray-50">
+                      <tr key={request.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors duration-150">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div>
-                            <div className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                            <div className="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2">
                               {isPendingMyApproval(request) && (
                                 <span className="relative inline-flex items-center justify-center">
                                   <Bell className="h-5 w-5 text-orange-600 animate-pulse" title="Pending your approval" />
@@ -807,22 +847,22 @@ const Dashboard = () => {
                               )}
                               {request.requestNumber}
                             </div>
-                            <div className="text-sm text-gray-500">
+                            <div className="text-sm text-gray-500 dark:text-gray-400">
                               {request.userName}
                             </div>
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">{request.requestor.fullName}</div>
-                          <div className="text-sm text-gray-500">{request.department.name}</div>
+                          <div className="text-sm text-gray-900 dark:text-white">{request.requestor.fullName}</div>
+                          <div className="text-sm text-gray-500 dark:text-gray-400">{request.department.name}</div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           {getStatusBadge(request.status)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                           {request.itemsCount} item{request.itemsCount !== 1 ? 's' : ''}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {request.status === 'draft'
                             ? 'Not submitted yet'
                             : request.submittedAt
@@ -839,11 +879,26 @@ const Dashboard = () => {
                                 navigate(`/requests/${request.id}`);
                               }
                             }}
-                            className="text-blue-600 hover:text-blue-900 flex items-center"
+                            className="text-blue-600 hover:text-blue-900 flex items-center mr-3"
                           >
                             <Eye className="h-4 w-4 mr-1" />
                             {request.status === 'draft' && user.id === request.requestor.id ? 'Edit' : 'View'}
                           </button>
+
+                          {(
+                            (request.status === 'draft' && user.id === request.requestor.id) ||
+                            user.role === 'super_administrator' ||
+                            activeTab === 'item' && isODHC
+                          ) && (
+                              <button
+                                onClick={() => handleDelete(request.id, 'item')}
+                                className="text-red-600 hover:text-red-900 flex items-center"
+                                title="Delete Request"
+                              >
+                                <Trash2 className="h-4 w-4 mr-1" />
+                                Delete
+                              </button>
+                            )}
                         </td>
                       </tr>
                     ))
@@ -877,7 +932,7 @@ const Dashboard = () => {
                       const isAssignedVerifier = request.verifier_id === user.id && request.verification_status === 'pending';
 
                       return (
-                        <tr key={request.id || request.request_id} className={`hover:bg-gray-50 ${isAssignedVerifier ? 'bg-purple-50' : ''}`}>
+                        <tr key={request.id || request.request_id} className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors duration-150 ${isAssignedVerifier ? 'bg-purple-50 dark:bg-purple-900/20' : ''}`}>
                           {activeTab === 'vehicle' && isODHC && (
                             <td className="px-6 py-4 whitespace-nowrap">
                               <input
@@ -890,7 +945,7 @@ const Dashboard = () => {
                           )}
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div>
-                              <div className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                              <div className="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2">
                                 {isPendingMyVehicleApproval(request) && (
                                   <span className="relative inline-flex items-center justify-center">
                                     <Bell className="h-5 w-5 text-orange-600 animate-pulse" title="Pending your approval" />
@@ -912,14 +967,14 @@ const Dashboard = () => {
                                   </span>
                                 )}
                               </div>
-                              <div className="text-sm text-gray-500">
+                              <div className="text-sm text-gray-500 dark:text-gray-400">
                                 {request.requestor_name || requestorName}
                               </div>
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm text-gray-900">{requestorName}</div>
-                            <div className="text-sm text-gray-500">{departmentName}</div>
+                            <div className="text-sm text-gray-900 dark:text-white">{requestorName}</div>
+                            <div className="text-sm text-gray-500 dark:text-gray-400">{departmentName}</div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             {getStatusBadge(request.status)}
@@ -938,10 +993,10 @@ const Dashboard = () => {
                               </div>
                             )}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                             {request.request_type ? request.request_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'N/A'}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                             {request.status === 'draft'
                               ? 'Not submitted yet'
                               : request.submitted_at
@@ -962,11 +1017,25 @@ const Dashboard = () => {
                                   navigate(`/service-vehicle-requests/${requestId}`);
                                 }
                               }}
-                              className="text-blue-600 hover:text-blue-900 flex items-center"
+                              className="text-blue-600 hover:text-blue-900 flex items-center mr-3"
                             >
                               <Eye className="h-4 w-4 mr-1" />
                               {(request.status === 'draft' || request.status === 'returned') && user.id === request.requested_by ? 'Edit' : 'View'}
                             </button>
+
+                            {(
+                              (user.id === request.requested_by && ['draft', 'declined'].includes(request.status)) ||
+                              isODHC
+                            ) && (
+                                <button
+                                  onClick={() => handleDelete(request.id || request.request_id, 'vehicle')}
+                                  className="text-red-600 hover:text-red-900 flex items-center"
+                                  title="Delete Request"
+                                >
+                                  <Trash2 className="h-4 w-4 mr-1" />
+                                  Delete
+                                </button>
+                              )}
                           </td>
                         </tr>
                       );
@@ -979,12 +1048,12 @@ const Dashboard = () => {
 
           {/* Pagination Controls */}
           {pagination.pages > 1 && (
-            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+            <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
               <div className="flex items-center justify-between">
-                <div className="text-sm text-gray-700">
-                  Showing <span className="font-medium">{(pagination.currentPage - 1) * (filters.limit || 5) + 1}</span> to{' '}
+                <div className="text-sm text-gray-700 dark:text-gray-300">
+                  Showing <span className="font-medium">{(pagination.currentPage - 1) * (filters.limit || 10) + 1}</span> to{' '}
                   <span className="font-medium">
-                    {Math.min(pagination.currentPage * (filters.limit || 5), pagination.total)}
+                    {Math.min(pagination.currentPage * (filters.limit || 10), pagination.total)}
                   </span>{' '}
                   of <span className="font-medium">{pagination.total}</span> requests
                 </div>
@@ -993,7 +1062,7 @@ const Dashboard = () => {
                   <button
                     onClick={() => setFilters(prev => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
                     disabled={pagination.currentPage === 1}
-                    className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                    className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
                   >
                     <ChevronLeft className="h-4 w-4 mr-1" />
                     Previous
@@ -1018,7 +1087,7 @@ const Dashboard = () => {
                           onClick={() => setFilters(prev => ({ ...prev, page: pageNum }))}
                           className={`px-3 py-2 text-sm font-medium rounded-md ${pagination.currentPage === pageNum
                             ? 'bg-blue-600 text-white'
-                            : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                            : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'
                             }`}
                         >
                           {pageNum}
@@ -1030,7 +1099,7 @@ const Dashboard = () => {
                   <button
                     onClick={() => setFilters(prev => ({ ...prev, page: Math.min(pagination.pages, prev.page + 1) }))}
                     disabled={pagination.currentPage === pagination.pages}
-                    className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                    className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
                   >
                     Next
                     <ChevronRight className="h-4 w-4 ml-1" />

@@ -16,7 +16,7 @@ import {
   X,
   Download,
 } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { validateServiceVehicleForm } from "../helpers/validations";
 import STC_LOGO from "../assets/STC_LOGO.png";
@@ -46,6 +46,10 @@ export default function ServiceVehicleRequestForm() {
   const navigate = useNavigate();
   const { id } = useParams();
   const { user } = useAuth();
+  const location = useLocation();
+
+
+
   const [formData, setFormData] = useState({
     requestor_name: "",
     date_prepared: "",
@@ -98,8 +102,65 @@ export default function ServiceVehicleRequestForm() {
   const [showRequestorSignatureModal, setShowRequestorSignatureModal] = useState(false);
   const [tempRequestorSignature, setTempRequestorSignature] = useState("");
   const [showVerifierModal, setShowVerifierModal] = useState(false);
+  const [bookedResources, setBookedResources] = useState({ vehicleIds: [], driverNames: [] });
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [showVerificationActionModal, setShowVerificationActionModal] = useState(false);
   const [verificationAction, setVerificationAction] = useState(null);
+
+  const isEditing = location.pathname.includes("/edit/");
+  const isViewing = !!id && !isEditing;
+
+  // Check availability when travel dates change
+  useEffect(() => {
+    const checkAvailability = async () => {
+      // Only check if both dates are present and user is an approver (ODHC)
+      if (
+        formData.travel_date_from &&
+        formData.travel_date_to &&
+        isODHCUser &&
+        (isViewing || isEditing)
+      ) {
+        try {
+          setAvailabilityLoading(true);
+          const response = await serviceVehicleRequestsAPI.checkAvailability(
+            formData.travel_date_from,
+            formData.travel_date_to,
+            formData.pick_up_time,
+            formData.drop_off_time
+          );
+
+          if (response.data.success) {
+            const availableVehicleIds = response.data.availableVehicles.map(v => v.id);
+            const availableDriverNames = response.data.availableDrivers.map(d => d.name);
+
+            setBookedResources({
+              vehicleIds: availableVehicles.filter(v => !availableVehicleIds.includes(v.id)).map(v => v.id),
+              driverNames: availableDrivers.filter(d => !availableDriverNames.some(availName => availName.toLowerCase() === d.name.toLowerCase())).map(d => d.name)
+            });
+          }
+        } catch (error) {
+          console.error("Error checking availability:", error);
+        } finally {
+          setAvailabilityLoading(false);
+        }
+      } else {
+        // Reset if dates are cleared
+        setBookedResources({ vehicleIds: [], driverNames: [] });
+      }
+    };
+
+    checkAvailability();
+  }, [
+    formData.travel_date_from,
+    formData.travel_date_to,
+    formData.pick_up_time,
+    formData.drop_off_time,
+    isODHCUser,
+    isViewing,
+    isEditing,
+    availableVehicles,
+    availableDrivers
+  ]);
 
   useEffect(() => {
     // Get current user's full name from auth context
@@ -304,6 +365,24 @@ export default function ServiceVehicleRequestForm() {
     } else if (name === "assigned_vehicle") {
       setSelectedVehicle(null);
     }
+  };
+
+
+
+
+  // Helper to check if a resource is available
+  const isVehicleAvailable = (vehicleId) => {
+    if (loading || availabilityLoading) return true; // Assume available while loading
+    if (!vehicleId) return true;
+    if (vehicleId === parseInt(formData.assigned_vehicle)) return true;
+    return !bookedResources.vehicleIds.includes(vehicleId);
+  };
+
+  const isDriverAvailable = (driverName) => {
+    if (loading || availabilityLoading) return true;
+    if (!driverName) return true;
+    if (driverName === formData.assigned_driver) return true;
+    return !bookedResources.driverNames.includes(driverName);
   };
 
   const handlePassengerChange = (index, field, value) => {
@@ -1020,7 +1099,7 @@ export default function ServiceVehicleRequestForm() {
                   {field.label} <span className="text-red-600">*</span>
                 </label>
                 <div
-                  className={`border-b-2 pb-1 ${errors[field.name] ? "border-red-500" : "border-gray-400"
+                  className={`border-b-2 pb-1 print:border-b-0 ${errors[field.name] ? "border-red-500" : "border-gray-400"
                     }`}
                 >
                   <input
@@ -1056,7 +1135,7 @@ export default function ServiceVehicleRequestForm() {
                     type="button"
                     onClick={addPassenger}
                     disabled={loading}
-                    className="flex items-center gap-1 text-blue-600 hover:text-blue-800 text-sm"
+                    className="flex items-center gap-1 text-blue-600 hover:text-blue-800 text-sm no-print"
                   >
                     <Plus className="h-4 w-4" />
                     Add Passenger
@@ -1079,7 +1158,7 @@ export default function ServiceVehicleRequestForm() {
                           type="button"
                           onClick={() => removePassenger(index)}
                           disabled={loading}
-                          className="text-red-600 hover:text-red-800"
+                          className="text-red-600 hover:text-red-800 no-print"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -1091,7 +1170,7 @@ export default function ServiceVehicleRequestForm() {
                         <label className="block text-xs font-semibold text-gray-700 mb-1">
                           Name <span className="text-red-600">*</span>
                         </label>
-                        <div className="border-b-2 border-gray-400 pb-1">
+                        <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                           <input
                             type="text"
                             value={passenger.name}
@@ -1123,9 +1202,6 @@ export default function ServiceVehicleRequestForm() {
     );
   };
 
-  const currentPath = window.location.pathname;
-  const isEditing = currentPath.includes("/edit");
-  const isViewing = !!id && !isEditing;
   const isCreating = !id;
 
   // Check if request is submitted/completed (should be read-only)
@@ -1224,12 +1300,12 @@ export default function ServiceVehicleRequestForm() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 py-8">
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 py-8 transition-colors duration-200">
       {/* Back Button */}
-      <div className="max-w-4xl mx-auto mb-4 px-4">
+      <div className="max-w-4xl mx-auto mb-4 px-4 no-print">
         <button
           onClick={() => navigate("/dashboard")}
-          className="flex items-center text-gray-600 hover:text-gray-800"
+          className="flex items-center text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
         >
           <ArrowLeft className="h-5 w-5 mr-1" />
           Back to Dashboard
@@ -1238,8 +1314,8 @@ export default function ServiceVehicleRequestForm() {
 
       {/* PDF-like Form Container */}
       <div
-        className="max-w-4xl mx-auto bg-white shadow-2xl"
-        style={{ boxShadow: "0 0 30px rgba(0,0,0,0.15)" }}
+        className="max-w-4xl mx-auto bg-white shadow-2xl print:shadow-none transition-colors duration-200"
+        style={{ boxShadow: "0 0 30px rgba(0,0,0,0.15)", colorScheme: "light" }}
       >
         <div className="p-8 md:p-12" style={{ minHeight: "11in" }}>
           {/* Header Section */}
@@ -1289,7 +1365,7 @@ export default function ServiceVehicleRequestForm() {
 
           {/* Pending Verification Banner */}
           {formData.verification_status === 'pending' && (
-            <div className="mb-6 p-4 bg-purple-50 border-2 border-purple-500 rounded-md">
+            <div className="mb-6 p-4 bg-purple-50 border-2 border-purple-500 rounded-md no-print">
               <div className="flex items-center">
                 <div className="p-2">
                   <UserCheck className="h-6 w-6 text-purple-500" />
@@ -1311,7 +1387,7 @@ export default function ServiceVehicleRequestForm() {
 
           {/* Verification Status Banner */}
           {formData.verification_status === 'verified' && (
-            <div className="mb-6 p-4 bg-green-50 border-2 border-green-500 rounded-md">
+            <div className="mb-6 p-4 bg-green-50 border-2 border-green-500 rounded-md no-print">
               <div className="flex items-center">
                 <div className="p-2">
                   <CheckCircle className="h-6 w-6 text-green-500" />
@@ -1339,7 +1415,7 @@ export default function ServiceVehicleRequestForm() {
           )}
 
           {formData.verification_status === 'declined' && (
-            <div className="mb-6 p-4 bg-red-50 border-2 border-red-500 rounded-md">
+            <div className="mb-6 p-4 bg-red-50 border-2 border-red-500 rounded-md no-print">
               <div className="flex items-center">
                 <div className="p-2">
                   <XCircle className="h-6 w-6 text-red-500" />
@@ -1371,7 +1447,7 @@ export default function ServiceVehicleRequestForm() {
           {/* Form */}
           <form className="space-y-6">
             {/* Section 1: Requestor Information */}
-            <div className="border border-gray-400 p-4 mb-6">
+            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">
                   Section 1: Requestor Information
@@ -1382,12 +1458,12 @@ export default function ServiceVehicleRequestForm() {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Name of Requestor <span className="text-red-600">*</span>
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <input
                       type="text"
                       value={formData.requestor_name}
                       disabled
-                      className="w-full bg-transparent border-0 focus:outline-none text-sm"
+                      className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900"
                     />
                   </div>
                 </div>
@@ -1396,7 +1472,7 @@ export default function ServiceVehicleRequestForm() {
                     Date Prepared <span className="text-red-600">*</span>
                   </label>
                   <div
-                    className={`border-b-2 pb-1 ${errors.date_prepared
+                    className={`border-b-2 pb-1 print:border-b-0 ${errors.date_prepared
                       ? "border-red-500"
                       : "border-gray-400"
                       }`}
@@ -1408,7 +1484,7 @@ export default function ServiceVehicleRequestForm() {
                       {...getInputProps({
                         onChange: handleChange,
                         className:
-                          "w-full bg-transparent border-0 focus:outline-none text-sm",
+                          "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                         disabled: loading,
                       })}
                     />
@@ -1423,7 +1499,7 @@ export default function ServiceVehicleRequestForm() {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Department <span className="text-red-600">*</span>
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <input
                       type="text"
                       value={
@@ -1442,7 +1518,7 @@ export default function ServiceVehicleRequestForm() {
                         })()
                       }
                       disabled
-                      className="w-full bg-transparent border-0 focus:outline-none text-sm"
+                      className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900"
                     />
                   </div>
                 </div>
@@ -1451,7 +1527,7 @@ export default function ServiceVehicleRequestForm() {
                     Contact Number <span className="text-red-600">*</span>
                   </label>
                   <div
-                    className={`border-b-2 pb-1 ${errors.contact_number
+                    className={`border-b-2 pb-1 print:border-b-0 ${errors.contact_number
                       ? "border-red-500"
                       : "border-gray-400"
                       }`}
@@ -1469,7 +1545,7 @@ export default function ServiceVehicleRequestForm() {
                           });
                         },
                         className:
-                          "w-full bg-transparent border-0 focus:outline-none text-sm",
+                          "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                         disabled: loading,
                       })}
                     />
@@ -1484,7 +1560,7 @@ export default function ServiceVehicleRequestForm() {
             </div>
 
             {/* Section 2: Request Details */}
-            <div className="border border-gray-400 p-4 mb-6">
+            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">
                   Section 2: Request Specific Details
@@ -1508,7 +1584,7 @@ export default function ServiceVehicleRequestForm() {
 
               {/* Purpose */}
               <div className="mb-3 md:mb-4 flex flex-col">
-                <label className="text-xs font-semibold block mb-1">
+                <label className="text-xs font-semibold block mb-1 text-gray-700">
                   Purpose of Request <span className="text-red-600">*</span>
                 </label>
                 <textarea
@@ -1517,7 +1593,7 @@ export default function ServiceVehicleRequestForm() {
                   {...getInputProps({
                     onChange: handleChange,
                     className:
-                      "w-full border border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500",
+                      "w-full border border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
                     disabled: loading || isReadOnly,
                     rows: "2",
                   })}
@@ -1527,7 +1603,7 @@ export default function ServiceVehicleRequestForm() {
 
               {/* Request Type */}
               <div className="mb-3 md:mb-4 flex flex-col">
-                <label className="text-xs font-semibold block mb-1">
+                <label className="text-xs font-semibold block mb-1 text-gray-700">
                   Type of Request <span className="text-red-600">*</span>
                 </label>
                 <select
@@ -1536,7 +1612,7 @@ export default function ServiceVehicleRequestForm() {
                   {...getInputProps({
                     onChange: handleChange,
                     className:
-                      "w-full border border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500",
+                      "w-full border border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
                     disabled: loading || isReadOnly,
                   })}
                 >
@@ -1555,7 +1631,7 @@ export default function ServiceVehicleRequestForm() {
               {/* Travel Dates */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 md:gap-x-8 md:gap-y-2 mb-3 md:mb-4">
                 <div className="flex flex-col">
-                  <label className="text-xs font-semibold mb-1">
+                  <label className="text-xs font-semibold mb-1 text-gray-700">
                     Travel Date From <span className="text-red-600">*</span>
                   </label>
                   <input
@@ -1565,14 +1641,14 @@ export default function ServiceVehicleRequestForm() {
                     {...getInputProps({
                       onChange: handleChange,
                       className:
-                        "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500",
+                        "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
                       disabled: loading || isReadOnly,
                     })}
                   />
                   {renderFieldError("travel_date_from")}
                 </div>
                 <div className="flex flex-col">
-                  <label className="text-xs font-semibold mb-1">
+                  <label className="text-xs font-semibold mb-1 text-gray-700">
                     Travel Date To <span className="text-red-600">*</span>
                   </label>
                   <input
@@ -1582,7 +1658,7 @@ export default function ServiceVehicleRequestForm() {
                     {...getInputProps({
                       onChange: handleChange,
                       className:
-                        "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500",
+                        "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
                       disabled: loading || isReadOnly,
                     })}
                   />
@@ -1596,7 +1672,7 @@ export default function ServiceVehicleRequestForm() {
 
             {/* Section 3: Driver's License Information - Only for car_only request type */}
             {formData.request_type === "car_only" && (
-              <div className="border border-gray-400 p-4 mb-6">
+              <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
                 <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                   <h2 className="text-sm font-bold text-gray-900 uppercase">
                     Section 3: Driver's License Information
@@ -1607,14 +1683,14 @@ export default function ServiceVehicleRequestForm() {
                     <label className="block text-xs font-semibold text-gray-700 mb-1">
                       Do you have a valid Driver's License? <span className="text-red-600">*</span>
                     </label>
-                    <div className="border-b-2 border-gray-400 pb-1">
+                    <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                       <select
                         name="has_valid_license"
                         value={formData.has_valid_license}
                         {...getInputProps({
                           onChange: handleChange,
                           className:
-                            "w-full bg-transparent border-0 focus:outline-none text-sm",
+                            "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900",
                           disabled: loading,
                         })}
                       >
@@ -1636,7 +1712,7 @@ export default function ServiceVehicleRequestForm() {
                       License Number <span className="text-red-600">*</span>
                     </label>
                     <div
-                      className={`border-b-2 pb-1 ${errors.license_number
+                      className={`border-b-2 pb-1 print:border-b-0 ${errors.license_number
                         ? "border-red-500"
                         : "border-gray-400"
                         }`}
@@ -1648,7 +1724,7 @@ export default function ServiceVehicleRequestForm() {
                         {...getInputProps({
                           onChange: handleChange,
                           className:
-                            "w-full bg-transparent border-0 focus:outline-none text-sm",
+                            "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                           disabled:
                             loading ||
                             formData.has_valid_license === "false" ||
@@ -1667,7 +1743,7 @@ export default function ServiceVehicleRequestForm() {
                       License Expiration Date <span className="text-red-600">*</span>
                     </label>
                     <div
-                      className={`border-b-2 pb-1 ${errors.expiration_date
+                      className={`border-b-2 pb-1 print:border-b-0 ${errors.expiration_date
                         ? "border-red-500"
                         : "border-gray-400"
                         }`}
@@ -1679,7 +1755,7 @@ export default function ServiceVehicleRequestForm() {
                         {...getInputProps({
                           onChange: handleChange,
                           className:
-                            "w-full bg-transparent border-0 focus:outline-none text-sm",
+                            "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                           disabled:
                             loading ||
                             formData.has_valid_license === "false" ||
@@ -1698,7 +1774,7 @@ export default function ServiceVehicleRequestForm() {
             )}
 
             {/* Section 3: Requestor Signature */}
-            <div className="border border-gray-400 p-4 mb-6">
+            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">
                   Section 3: Requestor Signature
@@ -1709,7 +1785,7 @@ export default function ServiceVehicleRequestForm() {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Name and Signature
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1 min-h-[40px] flex items-end">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0 min-h-[40px] flex items-end">
                     {formData.requestor_signature ? (
                       <div className="w-full">
                         <div
@@ -1754,7 +1830,7 @@ export default function ServiceVehicleRequestForm() {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Date
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <input
                       type="date"
                       name="requested_by_date"
@@ -1768,7 +1844,7 @@ export default function ServiceVehicleRequestForm() {
             </div>
 
             {/* Section 4: General Services Section */}
-            <div className="border border-gray-400 p-4 mb-6">
+            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">
                   Section 4: To Be Accomplished by OD & Human Capital – General
@@ -1780,7 +1856,7 @@ export default function ServiceVehicleRequestForm() {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Reference Code
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <div className="text-sm text-gray-500">
                       {formData.reference_code || "-"}
                     </div>
@@ -1791,7 +1867,7 @@ export default function ServiceVehicleRequestForm() {
                     Assigned Driver
                   </label>
                   {isODHCUser && (isViewing || isEditing) ? (
-                    <div className="border-b-2 border-gray-400 pb-1">
+                    <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                       <select
                         name="assigned_driver"
                         value={formData.assigned_driver || ""}
@@ -1802,15 +1878,24 @@ export default function ServiceVehicleRequestForm() {
                         className="w-full bg-transparent border-0 focus:outline-none text-sm text-center"
                       >
                         <option value="">Select a driver</option>
-                        {availableDrivers.map((driver) => (
-                          <option key={driver.id} value={driver.name}>
-                            {driver.name} - {driver.license_number}
-                          </option>
-                        ))}
+                        {availableDrivers.map((driver) => {
+                          const isAvailable = isDriverAvailable(driver.name);
+                          return (
+                            <option
+                              key={driver.id}
+                              value={driver.name}
+                              disabled={!isAvailable}
+                              className={!isAvailable ? "text-gray-400 bg-gray-100" : ""}
+                            >
+                              {driver.name} - {driver.license_number}
+                              {!isAvailable ? " (Unavailable)" : ""}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
                   ) : (
-                    <div className="border-b-2 border-gray-400 pb-1">
+                    <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                       <div className="text-sm text-gray-500">
                         {formData.assigned_driver || "-"}
                       </div>
@@ -1828,10 +1913,10 @@ export default function ServiceVehicleRequestForm() {
                       value={formData.approval_date || ""}
                       onChange={handleChange}
                       disabled={loading}
-                      className="w-full bg-transparent border-b-2 border-gray-400 pb-1 focus:outline-none text-sm text-center"
+                      className="w-full bg-transparent border-b-2 border-gray-400 pb-1 print:border-b-0 focus:outline-none text-sm text-center"
                     />
                   ) : (
-                    <div className="border-b-2 border-gray-400 pb-1">
+                    <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                       <div className="text-sm text-gray-500">
                         {formData.approval_date
                           ? new Date(
@@ -1848,7 +1933,7 @@ export default function ServiceVehicleRequestForm() {
                   </label>
                   {isODHCUser && (isViewing || isEditing) ? (
                     <div>
-                      <div className="border-b-2 border-gray-400 pb-1">
+                      <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                         <select
                           name="assigned_vehicle"
                           value={formData.assigned_vehicle || ""}
@@ -1864,10 +1949,16 @@ export default function ServiceVehicleRequestForm() {
                               vehicle.id
                             );
                             return (
-                              <option key={vehicle.id} value={vehicle.id}>
+                              <option
+                                key={vehicle.id}
+                                value={vehicle.id}
+                                disabled={!isVehicleAvailable(vehicle.id)}
+                                className={!isVehicleAvailable(vehicle.id) ? "text-gray-400 bg-gray-100" : ""}
+                              >
                                 {vehicle.plate} - {vehicle.year} {vehicle.make}{" "}
                                 {vehicle.model} ({vehicle.seaters} seaters)
                                 {isRecommended ? " - Recommended ✓" : ""}
+                                {!isVehicleAvailable(vehicle.id) ? " (Unavailable)" : ""}
                               </option>
                             );
                           })}
@@ -1876,7 +1967,7 @@ export default function ServiceVehicleRequestForm() {
                       {getAvailableVehiclesMessage()}
                     </div>
                   ) : (
-                    <div className="border-b-2 border-gray-400 pb-1">
+                    <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                       <div className="text-sm text-gray-500">
                         {selectedVehicle
                           ? `${selectedVehicle.plate} - ${selectedVehicle.year} ${selectedVehicle.make} ${selectedVehicle.model} (${selectedVehicle.seaters} seaters)`
@@ -1926,7 +2017,7 @@ export default function ServiceVehicleRequestForm() {
             </div>
 
             {/* Attachments Section */}
-            <div className="border border-gray-400 p-4 mb-6">
+            <div className="border border-gray-400 p-4 mb-6 no-print">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">
                   Attachments
@@ -1938,18 +2029,18 @@ export default function ServiceVehicleRequestForm() {
                   - Approvers: when reviewing (submitted, returned, department_approved, or completed status)
               */}
               {(
-                // Requestors can always select files
-                user?.role === "requestor" ||
+                // Requestors can upload if creating new, or status is draft/returned
+                (user?.role === "requestor" && (!id || ["draft", "returned"].includes(formData.status))) ||
                 // Approvers can upload when status is submitted, returned, department_approved, or completed
                 (id && (user?.role === "department_approver" || user?.role === "super_administrator") &&
                   ["submitted", "returned", "department_approved", "completed"].includes(formData.status))
               ) && (
-                  <div className="mb-4">
+                  <div className="mb-4 no-print">
                     <label className="block text-xs font-semibold text-gray-700 mb-2">
                       Upload Files
                     </label>
                     <div className="flex items-center space-x-2">
-                      <label className="flex items-center px-4 py-2 bg-gray-100 border border-gray-300 rounded cursor-pointer hover:bg-gray-200 text-sm">
+                      <label className="flex items-center px-4 py-2 bg-gray-100 border border-gray-300 rounded cursor-pointer hover:bg-gray-200 text-sm text-gray-900">
                         <Paperclip className="h-4 w-4 mr-2" />
                         {uploadingFiles ? "Uploading..." : "Choose Files"}
                         <input
@@ -1967,7 +2058,7 @@ export default function ServiceVehicleRequestForm() {
                     </div>
                     {!id && pendingFiles.length > 0 && (
                       <p className="text-xs text-blue-600 mt-2">
-                        {pendingFiles.length} file(s) will be uploaded when you save this request.
+                        {pendingFiles.length} file(s) will be uploaded when you save the request.
                       </p>
                     )}
                   </div>
@@ -2000,7 +2091,7 @@ export default function ServiceVehicleRequestForm() {
                           type="button"
                           onClick={() => handleRemovePendingFile(index)}
                           disabled={loading}
-                          className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50"
+                          className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50 no-print"
                           title="Remove file"
                         >
                           <X className="h-4 w-4" />
@@ -2054,7 +2145,7 @@ export default function ServiceVehicleRequestForm() {
                               handleDeleteAttachment(attachment.filename)
                             }
                             disabled={loading}
-                            className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50"
+                            className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50 no-print"
                             title="Delete attachment"
                           >
                             <X className="h-4 w-4" />
@@ -2071,7 +2162,14 @@ export default function ServiceVehicleRequestForm() {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex justify-end space-x-4 pt-6 border-t-2 border-gray-400 mt-8">
+            <div className="flex justify-end space-x-4 pt-6 border-t-2 border-gray-400 mt-8 no-print">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 text-sm font-semibold flex items-center"
+              >
+                <div className="mr-2">🖨️</div> Print
+              </button>
               <button
                 type="button"
                 onClick={handleCancel}

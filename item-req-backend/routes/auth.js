@@ -4,6 +4,7 @@ import ldapService from '../config/ldap.js';
 import emailService from '../utils/emailService.js';
 import { User, Department } from '../models/index.js';
 import { generateToken, authenticateToken } from '../middleware/auth.js';
+import { logAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -15,7 +16,7 @@ router.post('/login', [
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Validation failed',
         details: errors.array()
       });
@@ -25,16 +26,16 @@ router.post('/login', [
 
     // Authenticate with LDAP
     const ldapUser = await ldapService.authenticateUser(username, password);
-    
+
     if (!ldapUser) {
-      return res.status(401).json({ 
+      return res.status(401).json({
         error: 'Authentication failed',
         message: 'Invalid username or password'
       });
     }
 
     // Find or create user in database
-    let user = await User.findOne({ 
+    let user = await User.findOne({
       where: { email: ldapUser.email },
       include: [{
         model: Department,
@@ -46,24 +47,24 @@ router.post('/login', [
       // Find or create department using Department attribute only (not OU)
       let department = null;
       let departmentName = null;
-      
+
       // Use Department attribute from user profile
       if (ldapUser.department && ldapUser.department.trim()) {
         departmentName = ldapUser.department.trim();
         console.log(`✅ Login: Found department "${departmentName}" from Department attribute`);
       }
-      
+
       if (!departmentName) {
         console.log(`⚠️ Login: No department attribute found for user ${ldapUser.username || ldapUser.email}`);
       }
-      
+
       // Find or create department if we have a name
       if (departmentName) {
         // Try to find by name
         department = await Department.findOne({
           where: { name: departmentName }
         });
-        
+
         // Create department if it doesn't exist
         if (!department) {
           department = await Department.create({
@@ -78,7 +79,7 @@ router.post('/login', [
 
       // Create new user with default role (generate username from email if not available)
       const usernameValue = ldapUser.username || ldapUser.email.split('@')[0];
-      
+
       user = await User.create({
         username: usernameValue,
         email: ldapUser.email,
@@ -104,28 +105,28 @@ router.post('/login', [
       });
     } else {
       // Update existing user with latest AD data (keep existing role)
-      
+
       // Find department using Department attribute only (not OU)
       let department = user.Department;
       let currentDepartmentName = null;
-      
+
       // Use Department attribute from user profile
       if (ldapUser.department && ldapUser.department.trim()) {
         currentDepartmentName = ldapUser.department.trim();
         console.log(`✅ Login (update): Found department "${currentDepartmentName}" from Department attribute`);
       }
-      
+
       if (!currentDepartmentName) {
         console.log(`⚠️ Login (update): No department attribute found for user ${ldapUser.username || ldapUser.email}`);
       }
-      
+
       // Update department if found and different from current
       if (currentDepartmentName && (!department || department.name !== currentDepartmentName)) {
         // Try to find by name
         let newDepartment = await Department.findOne({
           where: { name: currentDepartmentName }
         });
-        
+
         // Create department if it doesn't exist
         if (!newDepartment) {
           newDepartment = await Department.create({
@@ -136,7 +137,7 @@ router.post('/login', [
             last_ad_sync: new Date()
           });
         }
-        
+
         department = newDepartment;
       }
 
@@ -165,32 +166,55 @@ router.post('/login', [
     // Generate JWT token
     const token = generateToken(user);
 
-    // Return user data (excluding sensitive fields)
-    const userData = {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      firstName: user.first_name,
-      lastName: user.last_name,
-      role: user.role,
-      department: user.Department ? {
-        id: user.Department.id,
-        name: user.Department.name
-      } : null,
-      title: user.title,
-      phone: user.phone,
-      isActive: user.is_active,
-      lastLogin: user.last_login
-    };
+    // Audit Log: Login
+    await logAudit({
+      actor: user,
+      action: 'LOGIN',
+      entityType: 'User',
+      entityId: user.id,
+      details: {
+        success: true,
+        method: 'local'
+      },
+      req
+    });
 
     res.json({
       message: 'Login successful',
       token,
-      user: userData
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+        department: user.Department ? {
+          id: user.Department.id,
+          name: user.Department.name
+        } : null,
+        title: user.title,
+        phone: user.phone,
+        isActive: user.is_active,
+        lastLogin: user.last_login
+      }
     });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ 
+    // Audit Log: Login Error
+    await logAudit({
+      actor: { username: req.body.username, email: req.body.username }, // Use provided username for actor
+      action: 'LOGIN_FAILED',
+      entityType: 'User',
+      entityId: null,
+      details: {
+        success: false,
+        method: 'local',
+        reason: error.message || 'An error occurred during login'
+      },
+      req
+    });
+    res.status(500).json({
       error: 'Login failed',
       message: error.message || 'An error occurred during login'
     });
@@ -232,7 +256,7 @@ router.get('/profile', authenticateToken, async (req, res) => {
     res.json({ user: userData });
   } catch (error) {
     console.error('Profile error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to get profile',
       message: error.message
     });
@@ -276,7 +300,7 @@ router.post('/refresh', authenticateToken, async (req, res) => {
     res.json({ token, user: userData });
   } catch (error) {
     console.error('Refresh token error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to refresh token',
       message: error.message
     });
@@ -288,10 +312,32 @@ router.post('/logout', authenticateToken, async (req, res) => {
   try {
     // In a stateless JWT system, logout is handled client-side
     // But we can log the logout event if needed
+    // Audit Log: Logout
+    if (req.user) { // Ensure user is authenticated
+      await logAudit({
+        actor: req.user,
+        action: 'LOGOUT',
+        entityType: 'User',
+        entityId: req.user.id,
+        details: { success: true },
+        req
+      });
+    }
     res.json({ message: 'Logout successful' });
   } catch (error) {
     console.error('Logout error:', error);
-    res.status(500).json({ 
+    // Audit Log: Logout Error
+    if (req.user) {
+      await logAudit({
+        actor: req.user,
+        action: 'LOGOUT_FAILED',
+        entityType: 'User',
+        entityId: req.user.id,
+        details: { success: false, reason: error.message },
+        req
+      });
+    }
+    res.status(500).json({
       error: 'Logout failed',
       message: error.message
     });
@@ -310,7 +356,7 @@ router.get('/test-ldap', authenticateToken, async (req, res) => {
     res.json(testResult);
   } catch (error) {
     console.error('LDAP test error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'LDAP test failed',
       message: error.message
     });
@@ -329,7 +375,7 @@ router.get('/test-email', authenticateToken, async (req, res) => {
     res.json(testResult);
   } catch (error) {
     console.error('Email test error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Email test failed',
       message: error.message
     });
@@ -356,7 +402,7 @@ router.post('/test-email/send', authenticateToken, [
 
     const { email } = req.body;
     const result = await emailService.sendTestEmail(email);
-    
+
     if (result.success) {
       res.json({
         success: true,
@@ -372,7 +418,7 @@ router.post('/test-email/send', authenticateToken, [
     }
   } catch (error) {
     console.error('Send test email error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to send test email',
       message: error.message
     });
@@ -381,7 +427,7 @@ router.post('/test-email/send', authenticateToken, [
 
 // Validate token
 router.get('/validate', authenticateToken, (req, res) => {
-  res.json({ 
+  res.json({
     valid: true,
     user: {
       id: req.user.id,

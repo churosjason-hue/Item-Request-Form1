@@ -61,6 +61,17 @@ const WorkflowStep = sequelize.define('WorkflowStep', {
     allowNull: false,
     comment: 'If true, approver must be from the same department as the requestor'
   },
+  approval_logic: {
+    type: DataTypes.ENUM('any', 'all'),
+    defaultValue: 'any',
+    allowNull: false,
+    comment: 'Logic for multiple approvers: "any" (one person approves), "all" (everyone must approve)'
+  },
+  specific_approver_ids: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    comment: 'Array of user IDs for specific approvers (if multiple)'
+  },
   is_required: {
     type: DataTypes.BOOLEAN,
     defaultValue: true,

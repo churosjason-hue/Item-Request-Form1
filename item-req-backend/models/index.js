@@ -10,8 +10,20 @@ import WorkflowStep from './WorkflowStep.js';
 import VehicleApproval from './VehicleApproval.js';
 import Vehicle from './Vehicle.js';
 import Driver from './Driver.js';
+import AuditLog from './AuditLog.js';
 
 // Define associations
+
+// AuditLog - User associations
+AuditLog.belongsTo(User, {
+  foreignKey: 'actor_id',
+  as: 'Actor'
+});
+
+User.hasMany(AuditLog, {
+  foreignKey: 'actor_id',
+  as: 'AuditLogs'
+});
 
 // User - Department associations
 User.belongsTo(Department, {
@@ -211,7 +223,8 @@ export {
   WorkflowStep,
   VehicleApproval,
   Vehicle,
-  Driver
+  Driver,
+  AuditLog
 };
 
 // Sync database function

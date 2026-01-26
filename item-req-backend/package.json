@@ -32,7 +32,11 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "cross-env": "^10.1.0",
+    "jest": "^30.2.0",
+    "node-mocks-http": "^1.17.2",
+    "nodemon": "^3.0.2",
+    "supertest": "^7.2.2"
   },
   "keywords": [
     "express",

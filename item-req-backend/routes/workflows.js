@@ -10,6 +10,7 @@ import {
   ServiceVehicleRequest
 } from '../models/index.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
+import { logAudit, calculateChanges } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -27,17 +28,17 @@ function mapUserData(user) {
 // Helper function to map workflow data
 function mapWorkflowData(workflow) {
   const workflowData = workflow.toJSON ? workflow.toJSON() : workflow;
-  
+
   // Map Creator
   if (workflowData.Creator) {
     workflowData.Creator = mapUserData(workflowData.Creator);
   }
-  
+
   // Map Updater
   if (workflowData.Updater) {
     workflowData.Updater = mapUserData(workflowData.Updater);
   }
-  
+
   // Map Steps and their ApproverUser
   if (workflowData.Steps) {
     workflowData.Steps = workflowData.Steps.map(step => {
@@ -47,7 +48,7 @@ function mapWorkflowData(workflow) {
       return step;
     });
   }
-  
+
   return workflowData;
 }
 
@@ -386,6 +387,19 @@ router.post(
         message: 'Workflow created successfully',
         workflow: mappedWorkflow
       });
+
+      // Audit Log: Workflow Created
+      await logAudit({
+        req,
+        action: 'CREATE',
+        entityType: 'Workflow',
+        entityId: workflow.id,
+        details: {
+          name: workflow.name,
+          formType: workflow.form_type,
+          steps_count: createdSteps.length
+        }
+      });
     } catch (error) {
       console.error('Error creating workflow:', error);
       res.status(500).json({
@@ -503,6 +517,19 @@ router.put(
         message: 'Workflow updated successfully',
         workflow: mappedWorkflow
       });
+
+      // Audit Log: Workflow Updated
+      await logAudit({
+        req,
+        action: 'UPDATE',
+        entityType: 'Workflow',
+        entityId: workflow.id,
+        details: {
+          change: 'Workflow Configuration Update',
+          name: workflow.name,
+          steps_updated: steps ? true : false
+        }
+      });
     } catch (error) {
       console.error('Error updating workflow:', error);
       res.status(500).json({
@@ -567,6 +594,18 @@ router.delete('/:id', authenticateToken, requireRole(['super_administrator']), a
     }
 
     await workflow.destroy();
+
+    // Audit Log: Workflow Deleted
+    await logAudit({
+      req,
+      action: 'DELETE',
+      entityType: 'Workflow',
+      entityId: id,
+      details: {
+        name: workflow.name,
+        formType: workflow.form_type
+      }
+    });
 
     res.json({
       success: true,

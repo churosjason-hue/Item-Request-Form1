@@ -4,6 +4,7 @@ import { Department, User } from '../models/index.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 import ldapService from '../config/ldap.js';
 import exportService from '../utils/exportService.js';
+import { logAudit, calculateChanges } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ const router = express.Router();
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { active = 'true' } = req.query;
-    
+
     const whereClause = {};
     if (active !== 'all') {
       whereClause.is_active = active === 'true';
@@ -64,7 +65,7 @@ router.get('/', authenticateToken, async (req, res) => {
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const department = await Department.findByPk(id, {
       include: [{
         model: Department,
@@ -184,7 +185,7 @@ router.post('/', authenticateToken, requireRole('super_administrator'), async (r
     // Sync to Active Directory (if enabled)
     let adSyncResult = null;
     const adSyncEnabled = process.env.ENABLE_AD_DEPARTMENT_SYNC !== 'false';
-    
+
     if (adSyncEnabled) {
       try {
         const adResult = await ldapService.createOrganizationalUnit(
@@ -192,7 +193,7 @@ router.post('/', authenticateToken, requireRole('super_administrator'), async (r
           department.description,
           parentDN
         );
-        
+
         if (adResult.success) {
           // Update department with AD DN
           await department.update({
@@ -208,13 +209,13 @@ router.post('/', authenticateToken, requireRole('super_administrator'), async (r
       } catch (adError) {
         // Log error but don't fail the request - department is created in DB
         console.error(`❌ AD sync failed for department "${department.name}":`, adError.message);
-        
+
         // Check if it's a permission error
-        const isPermissionError = adError.message.includes('Permission denied') || 
-                                  adError.message.includes('INSUFF_ACCESS_RIGHTS');
-        
-        adSyncResult = { 
-          synced: false, 
+        const isPermissionError = adError.message.includes('Permission denied') ||
+          adError.message.includes('INSUFF_ACCESS_RIGHTS');
+
+        adSyncResult = {
+          synced: false,
           message: adError.message,
           isPermissionError: isPermissionError
         };
@@ -222,6 +223,20 @@ router.post('/', authenticateToken, requireRole('super_administrator'), async (r
     } else {
       adSyncResult = { synced: false, message: 'AD sync is disabled', disabled: true };
     }
+
+    // Audit Log: Department Created
+    await logAudit({
+      req,
+      action: 'CREATE',
+      entityType: 'Department',
+      entityId: department.id,
+      details: {
+        name: department.name,
+        description: department.description,
+        parentId: department.parent_id,
+        adSync: adSyncResult
+      }
+    });
 
     res.status(201).json({
       message: 'Department created successfully',
@@ -251,7 +266,7 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
     const { name, description, parentId, isActive } = req.body;
 
     const department = await Department.findByPk(id);
-    
+
     if (!department) {
       return res.status(404).json({
         error: 'Department not found',
@@ -270,7 +285,7 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
 
       // Check if another department has this name
       const existingDept = await Department.findOne({
-        where: { 
+        where: {
           name: name.trim(),
           id: { [Op.ne]: id }
         }
@@ -307,7 +322,8 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
     const oldName = department.name;
     const oldDescription = department.description;
     const oldParentId = department.parent_id;
-    
+    const oldIsActive = department.is_active;
+
     if (name !== undefined) updateData.name = name.trim();
     if (description !== undefined) updateData.description = description?.trim() || name?.trim() || department.name;
     if (parentId !== undefined) updateData.parent_id = parentId;
@@ -317,7 +333,7 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
     let adSyncResult = null;
     const adSyncEnabled = process.env.ENABLE_AD_DEPARTMENT_SYNC !== 'false';
     const needsAdSync = adSyncEnabled && (department.ad_dn || (name !== undefined || description !== undefined || parentId !== undefined));
-    
+
     if (needsAdSync) {
       try {
         if (department.ad_dn) {
@@ -400,13 +416,13 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
               parentDN = oldParentDN;
             }
           }
-          
+
           if (existingOU) {
             // OU exists - update it (may rename if name changed, may move if parent changed)
             const needsRename = name !== undefined && name.trim() !== foundWithName;
             const needsMove = parentId !== undefined && parentId !== oldParentId;
             let newParentDNForUpdate = null;
-            
+
             if (needsMove) {
               if (parentId) {
                 const newParent = await Department.findByPk(parentId);
@@ -462,13 +478,13 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
         }
       } catch (adError) {
         console.error(`❌ AD sync failed for department "${department.name}":`, adError.message);
-        
+
         // Check if it's a permission error
-        const isPermissionError = adError.message.includes('Permission denied') || 
-                                  adError.message.includes('INSUFF_ACCESS_RIGHTS');
-        
-        adSyncResult = { 
-          synced: false, 
+        const isPermissionError = adError.message.includes('Permission denied') ||
+          adError.message.includes('INSUFF_ACCESS_RIGHTS');
+
+        adSyncResult = {
+          synced: false,
           message: adError.message,
           isPermissionError: isPermissionError
         };
@@ -478,8 +494,32 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
       adSyncResult = { synced: false, message: 'AD sync is disabled', disabled: true };
     }
 
+    // Calculate changes for audit log before updating
+    const changes = calculateChanges({
+      name: oldName,
+      description: oldDescription,
+      parent_id: oldParentId,
+      is_active: oldIsActive
+    }, {
+      name: updateData.name,
+      description: updateData.description,
+      parent_id: updateData.parent_id,
+      is_active: updateData.is_active
+    });
+
     // Update department in database
     await department.update(updateData);
+
+    // Audit Log: Department Updated
+    if (Object.keys(changes).length > 0) {
+      await logAudit({
+        req,
+        action: 'UPDATE',
+        entityType: 'Department',
+        entityId: department.id,
+        details: { changes, adSync: adSyncResult }
+      });
+    }
 
     res.json({
       message: 'Department updated successfully',
@@ -506,7 +546,7 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
 router.delete('/:id', authenticateToken, requireRole('super_administrator'), async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const department = await Department.findByPk(id, {
       include: [{
         model: User,
@@ -543,24 +583,24 @@ router.delete('/:id', authenticateToken, requireRole('super_administrator'), asy
     // Delete from Active Directory (always attempt if AD sync is enabled)
     let adDeleteResult = null;
     const adSyncEnabled = process.env.ENABLE_AD_DEPARTMENT_SYNC !== 'false';
-    
+
     if (adSyncEnabled) {
       try {
         let ouDN = department.ad_dn;
-        
+
         // If department doesn't have ad_dn stored, try to find the OU in AD
         if (!ouDN) {
           console.log(`⚠️ Department "${department.name}" has no stored AD DN, searching for OU in AD...`);
-          
+
           // Try to find the OU by name
           let parentDN = null;
           if (department.parent_id) {
             const parentDept = await Department.findByPk(department.parent_id);
             parentDN = parentDept?.ad_dn || null;
           }
-          
+
           ouDN = await ldapService.findOrganizationalUnitDN(department.name, parentDN);
-          
+
           if (!ouDN) {
             console.log(`⚠️ OU "${department.name}" not found in AD, proceeding with database deletion only`);
             adDeleteResult = { deleted: false, message: 'OU not found in AD, deleted from database only' };
@@ -568,11 +608,11 @@ router.delete('/:id', authenticateToken, requireRole('super_administrator'), asy
             console.log(`✅ Found OU in AD: ${ouDN}, proceeding with deletion`);
           }
         }
-        
+
         // Delete from AD if we have a DN (either from database or found by search)
         if (ouDN) {
           const adResult = await ldapService.deleteOrganizationalUnit(ouDN);
-          
+
           if (adResult.success) {
             adDeleteResult = { deleted: true, message: adResult.message };
             console.log(`✅ Successfully deleted OU from AD: ${ouDN}`);
@@ -588,15 +628,15 @@ router.delete('/:id', authenticateToken, requireRole('super_administrator'), asy
       } catch (adError) {
         console.error(`❌ AD deletion failed for department "${department.name}":`, adError.message);
         console.error('Error details:', adError);
-        
+
         // Check if it's a permission error or has children
-        const isPermissionError = adError.message.includes('Permission denied') || 
-                                  adError.message.includes('INSUFF_ACCESS_RIGHTS') ||
-                                  adError.message.includes('Delete organizationalUnit objects');
-        const hasChildren = adError.message.includes('child objects') || 
-                           adError.message.includes('not empty') ||
-                           adError.message.includes('0000209A'); // LDAP error code for "not empty"
-        
+        const isPermissionError = adError.message.includes('Permission denied') ||
+          adError.message.includes('INSUFF_ACCESS_RIGHTS') ||
+          adError.message.includes('Delete organizationalUnit objects');
+        const hasChildren = adError.message.includes('child objects') ||
+          adError.message.includes('not empty') ||
+          adError.message.includes('0000209A'); // LDAP error code for "not empty"
+
         if (hasChildren) {
           // The recursive deletion should handle this, but if it still fails, return error
           return res.status(400).json({
@@ -604,7 +644,7 @@ router.delete('/:id', authenticateToken, requireRole('super_administrator'), asy
             message: `Cannot delete OU from AD: ${adError.message}. The OU may contain objects that cannot be deleted.`
           });
         }
-        
+
         // For permission errors, prevent database deletion and return error
         if (isPermissionError) {
           return res.status(403).json({
@@ -617,11 +657,11 @@ router.delete('/:id', authenticateToken, requireRole('super_administrator'), asy
             }
           });
         }
-        
+
         // For other errors, warn but allow deletion from DB
         // (Admin can manually delete from AD later)
-        adDeleteResult = { 
-          deleted: false, 
+        adDeleteResult = {
+          deleted: false,
           message: adError.message,
           warning: 'Department deleted from database, but AD deletion failed. Please delete the OU manually from Active Directory.',
           isPermissionError: false
@@ -631,8 +671,32 @@ router.delete('/:id', authenticateToken, requireRole('super_administrator'), asy
       adDeleteResult = { deleted: false, message: 'AD sync is disabled', disabled: true };
     }
 
+    // Store department details for audit log before deletion
+    const departmentDetails = {
+      id: department.id,
+      name: department.name,
+      description: department.description,
+      adDn: department.ad_dn,
+      parentId: department.parent_id
+    };
+
     // Delete from database
     await department.destroy();
+
+    // Audit Log: Department Deleted
+    await logAudit({
+      req,
+      action: 'DELETE',
+      entityType: 'Department',
+      entityId: departmentDetails.id,
+      details: {
+        name: departmentDetails.name,
+        description: departmentDetails.description,
+        adDn: departmentDetails.adDn,
+        parentId: departmentDetails.parentId,
+        adDelete: adDeleteResult
+      }
+    });
 
     res.json({
       message: 'Department deleted successfully',
@@ -651,7 +715,7 @@ router.delete('/:id', authenticateToken, requireRole('super_administrator'), asy
 router.post('/:id/sync', authenticateToken, requireRole('super_administrator'), async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const department = await Department.findByPk(id, {
       include: [{
         model: Department,
@@ -659,7 +723,7 @@ router.post('/:id/sync', authenticateToken, requireRole('super_administrator'), 
         required: false
       }]
     });
-    
+
     if (!department) {
       return res.status(404).json({
         error: 'Department not found',
@@ -703,7 +767,7 @@ router.post('/:id/sync', authenticateToken, requireRole('super_administrator'), 
       } else {
         // Department doesn't have AD DN - check if OU exists, otherwise create it
         const existingOU = await ldapService.findOrganizationalUnitDN(department.name, parentDN);
-        
+
         if (existingOU) {
           // OU exists - link it to the department
           await department.update({
@@ -744,12 +808,12 @@ router.post('/:id/sync', authenticateToken, requireRole('super_administrator'), 
       }
     } catch (adError) {
       console.error(`❌ AD sync failed for department "${department.name}":`, adError.message);
-      
-      const isPermissionError = adError.message.includes('Permission denied') || 
-                                adError.message.includes('INSUFF_ACCESS_RIGHTS');
-      
-      adSyncResult = { 
-        synced: false, 
+
+      const isPermissionError = adError.message.includes('Permission denied') ||
+        adError.message.includes('INSUFF_ACCESS_RIGHTS');
+
+      adSyncResult = {
+        synced: false,
         message: adError.message,
         isPermissionError: isPermissionError
       };
@@ -828,7 +892,7 @@ router.get('/hierarchy/tree', authenticateToken, async (req, res) => {
     // Second pass: build tree
     departments.forEach(dept => {
       const deptNode = departmentMap.get(dept.id);
-      
+
       if (dept.parent_id && departmentMap.has(dept.parent_id)) {
         const parent = departmentMap.get(dept.parent_id);
         parent.children.push(deptNode);

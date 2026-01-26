@@ -448,9 +448,9 @@ const RequestForm = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 py-8">
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 py-8 transition-colors duration-200">
       {/* Back Button */}
-      <div className="max-w-4xl mx-auto mb-4 px-4">
+      <div className="max-w-4xl mx-auto mb-4 px-4 no-print">
         <button
           onClick={() => navigate('/dashboard')}
           className="flex items-center text-gray-600 hover:text-gray-800"
@@ -461,7 +461,7 @@ const RequestForm = () => {
       </div>
 
       {/* PDF-like Form Container */}
-      <div className="max-w-4xl mx-auto bg-white shadow-2xl" style={{ boxShadow: '0 0 30px rgba(0,0,0,0.15)' }}>
+      <div className="max-w-4xl mx-auto bg-white shadow-2xl print:shadow-none transition-colors duration-200" style={{ boxShadow: '0 0 30px rgba(0,0,0,0.15)', colorScheme: 'light' }}>
         <div className="p-8 md:p-12" style={{ minHeight: '11in' }}>
           {/* Header Section */}
           <div className="border-b-2 border-gray-800 pb-4 mb-6">
@@ -534,47 +534,47 @@ const RequestForm = () => {
           {/* Form */}
           <form className="space-y-6">
             {/* Section 1: Requestor Information */}
-            <div className="border border-gray-400 p-4 mb-6">
+            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">Section 1: Requestor Information</h2>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  <label className="block text-xs font-semibold text-gray-700 text-gray-900 mb-1">
                     Name of Requestor <span className="text-red-600">*</span>
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <input
                       type="text"
                       value={getRequestorName()}
                       disabled
-                      className="w-full bg-transparent border-0 focus:outline-none text-sm"
+                      className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  <label className="block text-xs font-semibold text-gray-700 text-gray-900 mb-1">
                     Position
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <input
                       type="text"
                       value={user?.title || user?.position || ''}
                       disabled
-                      className="w-full bg-transparent border-0 focus:outline-none text-sm"
+                      className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  <label className="block text-xs font-semibold text-gray-700 text-gray-900 mb-1">
                     Department <span className="text-red-600">*</span>
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <input
                       type="text"
                       value={user?.department?.name || user?.Department?.name || ''}
                       disabled
-                      className="w-full bg-transparent border-0 focus:outline-none text-sm"
+                      className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900"
                     />
                   </div>
                 </div>
@@ -582,7 +582,7 @@ const RequestForm = () => {
             </div>
 
             {/* Section 2: User Information */}
-            <div className="border border-gray-400 p-4 mb-6">
+            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">Section 2: User Information</h2>
               </div>
@@ -591,13 +591,13 @@ const RequestForm = () => {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     User's Name <span className="text-red-600">*</span>
                   </label>
-                  <div className={`border-b-2 pb-1 ${errors.userName ? 'border-red-500' : 'border-gray-400'}`}>
+                  <div className={`border-b-2 pb-1 print:border-b-0 ${errors.userName ? 'border-red-500' : 'border-gray-400'}`}>
                     <input
                       type="text"
                       value={formData.userName}
                       {...getInputProps({
                         onChange: (e) => handleInputChange('userName', e.target.value),
-                        className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                        className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                         placeholder: "Name of person who will use the equipment"
                       })}
                     />
@@ -610,13 +610,13 @@ const RequestForm = () => {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Position
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <input
                       type="text"
                       value={formData.userPosition}
                       {...getInputProps({
                         onChange: (e) => handleInputChange('userPosition', e.target.value),
-                        className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                        className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                         placeholder: "Position of the user"
                       })}
                     />
@@ -626,13 +626,13 @@ const RequestForm = () => {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Date Required
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <input
                       type="date"
                       value={formData.dateRequired}
                       {...getInputProps({
                         onChange: (e) => handleInputChange('dateRequired', e.target.value),
-                        className: "w-full bg-transparent border-0 focus:outline-none text-sm"
+                        className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500"
                       })}
                     />
                   </div>
@@ -641,7 +641,7 @@ const RequestForm = () => {
             </div>
 
             {/* Section 3: Equipment Required */}
-            <div className="border border-gray-400 p-4 mb-6">
+            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">Section 3: Equipment Required</h2>
               </div>
@@ -657,7 +657,7 @@ const RequestForm = () => {
                       <th className="border border-gray-600 px-2 py-2 text-left text-xs font-bold" style={{ border: '1px solid #000' }}>INV</th>
                       <th className="border border-gray-600 px-2 py-2 text-left text-xs font-bold" style={{ border: '1px solid #000' }}>PROPOSED SPECS</th>
                       <th className="border border-gray-600 px-2 py-2 text-left text-xs font-bold" style={{ border: '1px solid #000' }}>PURPOSE</th>
-                      {!isViewing && <th className="border border-gray-600 px-2 py-2 text-left text-xs font-bold" style={{ border: '1px solid #000' }}>Actions</th>}
+                      {!isViewing && <th className="border border-gray-600 px-2 py-2 text-left text-xs font-bold no-print" style={{ border: '1px solid #000' }}>Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -671,7 +671,7 @@ const RequestForm = () => {
                             value={item.category}
                             {...getInputProps({
                               onChange: (e) => handleItemChange(index, 'category', e.target.value),
-                              className: "w-full px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent"
+                              className: "w-full px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent text-gray-900"
                             })}
                           >
                             {EQUIPMENT_CATEGORIES.map(cat => (
@@ -685,7 +685,7 @@ const RequestForm = () => {
                             {...getInputProps({
                               onChange: (e) => handleItemChange(index, 'itemDescription', e.target.value),
                               placeholder: "Detailed description...",
-                              className: `w-full mt-1 px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent ${errors[`item_${index}_description`] ? 'border-red-500' : ''
+                              className: `w-full mt-1 px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent text-gray-900 placeholder-gray-500 ${errors[`item_${index}_description`] ? 'border-red-500' : ''
                                 }`,
                               rows: 2
                             })}
@@ -701,7 +701,7 @@ const RequestForm = () => {
                             value={item.quantity}
                             {...getInputProps({
                               onChange: (e) => handleItemChange(index, 'quantity', parseInt(e.target.value) || 1),
-                              className: `w-16 px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent ${errors[`item_${index}_quantity`] ? 'border-red-500' : ''
+                              className: `w-16 px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent text-gray-900 placeholder-gray-500 ${errors[`item_${index}_quantity`] ? 'border-red-500' : ''
                                 }`
                             })}
                           />
@@ -716,7 +716,7 @@ const RequestForm = () => {
                             {...getInputProps({
                               onChange: (e) => handleItemChange(index, 'inventoryNumber', e.target.value),
                               placeholder: "INV#",
-                              className: "w-full px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent"
+                              className: "w-full px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent text-gray-900 placeholder-gray-500"
                             })}
                           />
                         </td>
@@ -726,7 +726,7 @@ const RequestForm = () => {
                             {...getInputProps({
                               onChange: (e) => handleItemChange(index, 'proposedSpecs', e.target.value),
                               placeholder: "Technical specifications...",
-                              className: "w-full px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent",
+                              className: "w-full px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent text-gray-900 placeholder-gray-500",
                               rows: 2
                             })}
                           />
@@ -737,13 +737,13 @@ const RequestForm = () => {
                             {...getInputProps({
                               onChange: (e) => handleItemChange(index, 'purpose', e.target.value),
                               placeholder: "Intended use...",
-                              className: "w-full px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent",
+                              className: "w-full px-1 py-1 border-0 border-b border-gray-300 focus:outline-none focus:border-blue-500 text-xs bg-transparent text-gray-900 placeholder-gray-500",
                               rows: 2
                             })}
                           />
                         </td>
                         {!isViewing && (
-                          <td className="border border-gray-600 px-2 py-2 text-center" style={{ border: '1px solid #000' }}>
+                          <td className="border border-gray-600 px-2 py-2 text-center no-print" style={{ border: '1px solid #000' }}>
                             <button
                               type="button"
                               onClick={() => removeItem(index)}
@@ -764,7 +764,7 @@ const RequestForm = () => {
                 <button
                   type="button"
                   onClick={addItem}
-                  className="flex items-center text-blue-600 hover:text-blue-800 mb-4 text-sm"
+                  className="flex items-center text-blue-600 hover:text-blue-800 mb-4 text-sm no-print"
                 >
                   <Plus className="h-4 w-4 mr-1" />
                   Add Item
@@ -775,20 +775,20 @@ const RequestForm = () => {
               <div className="space-y-4 mt-6">
                 {formData.items.map((item, index) => (
                   <div key={index} className="border border-gray-300 p-3">
-                    <h4 className="font-semibold text-sm mb-3">Additional Details for Item {index + 1}</h4>
+                    <h4 className="font-semibold text-sm mb-3 text-gray-900">Additional Details for Item {index + 1}</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-xs font-semibold text-gray-700 mb-1">
                           Estimated Cost:
                         </label>
-                        <div className="border-b-2 border-gray-400 pb-1">
+                        <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                           <input
                             type="number"
                             step="0.01"
                             value={item.estimatedCost}
                             {...getInputProps({
                               onChange: (e) => handleItemChange(index, 'estimatedCost', e.target.value),
-                              className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                              className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                               placeholder: "0.00"
                             })}
                           />
@@ -798,20 +798,20 @@ const RequestForm = () => {
                         <label className="block text-xs font-semibold text-gray-700 mb-1">
                           Vendor Information:
                         </label>
-                        <div className="border-b-2 border-gray-400 pb-1">
+                        <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                           <input
                             type="text"
                             value={item.vendorInfo}
                             {...getInputProps({
                               onChange: (e) => handleItemChange(index, 'vendorInfo', e.target.value),
-                              className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                              className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                               placeholder: "Preferred vendor or supplier"
                             })}
                           />
                         </div>
                       </div>
                       <div className="md:col-span-2">
-                        <label className="flex items-center text-xs">
+                        <label className="flex items-center text-xs text-gray-900">
                           <input
                             type="checkbox"
                             checked={item.isReplacement}
@@ -823,13 +823,13 @@ const RequestForm = () => {
                           This is a replacement for existing equipment
                         </label>
                         {item.isReplacement && (
-                          <div className="border-b-2 border-gray-400 pb-1 mt-2">
+                          <div className="border-b-2 border-gray-400 pb-1 print:border-b-0 mt-2">
                             <textarea
                               value={item.replacedItemInfo}
                               {...getInputProps({
                                 onChange: (e) => handleItemChange(index, 'replacedItemInfo', e.target.value),
                                 placeholder: "Information about the item being replaced...",
-                                className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                                className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                                 rows: 2
                               })}
                             />
@@ -840,13 +840,13 @@ const RequestForm = () => {
                         <label className="block text-xs font-semibold text-gray-700 mb-1">
                           Urgency Reason (if applicable):
                         </label>
-                        <div className="border-b-2 border-gray-400 pb-1">
+                        <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                           <textarea
                             value={item.urgencyReason}
                             {...getInputProps({
                               onChange: (e) => handleItemChange(index, 'urgencyReason', e.target.value),
                               placeholder: "Explain why this item is urgently needed...",
-                              className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                              className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                               rows: 2
                             })}
                           />
@@ -859,7 +859,7 @@ const RequestForm = () => {
             </div>
 
             {/* Section 4: Request Details */}
-            <div className="border border-gray-400 p-4 mb-6">
+            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">Section 4: Request Details</h2>
               </div>
@@ -868,12 +868,12 @@ const RequestForm = () => {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Reason for Equipment Request: <span className="text-red-600">*</span>
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <textarea
                       value={formData.reason}
                       {...getInputProps({
                         onChange: (e) => handleInputChange('reason', e.target.value),
-                        className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                        className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                         rows: 3,
                         placeholder: "Explain why this equipment is needed..."
                       })}
@@ -884,12 +884,12 @@ const RequestForm = () => {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     Priority:
                   </label>
-                  <div className="border-b-2 border-gray-400 pb-1">
+                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                     <select
                       value={formData.priority}
                       {...getInputProps({
                         onChange: (e) => handleInputChange('priority', e.target.value),
-                        className: "w-full bg-transparent border-0 focus:outline-none text-sm"
+                        className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900"
                       })}
                     >
                       {PRIORITY_OPTIONS.map(option => (
@@ -905,12 +905,12 @@ const RequestForm = () => {
                 <label className="block text-xs font-semibold text-gray-700 mb-1">
                   Additional Comments:
                 </label>
-                <div className="border-b-2 border-gray-400 pb-1">
+                <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
                   <textarea
                     value={formData.comments}
                     {...getInputProps({
                       onChange: (e) => handleInputChange('comments', e.target.value),
-                      className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                      className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
                       rows: 3,
                       placeholder: "Any additional information or special requirements..."
                     })}
@@ -920,7 +920,7 @@ const RequestForm = () => {
             </div>
 
             {/* Section 5: Signatures */}
-            <div className="border border-gray-400 p-4 mb-6">
+            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">Section 5: Signatures</h2>
               </div>
@@ -1187,7 +1187,15 @@ const RequestForm = () => {
             )}
 
             {/* Action Buttons */}
-            <div className="flex justify-end space-x-4 pt-6 border-t-2 border-gray-400 mt-8">
+            <div className="flex justify-end space-x-4 pt-6 border-t-2 border-gray-400 mt-8 no-print">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 text-sm font-semibold flex items-center"
+              >
+                <div className="mr-2">🖨️</div> Print
+              </button>
+
               <button
                 type="button"
                 onClick={() => navigate('/dashboard')}

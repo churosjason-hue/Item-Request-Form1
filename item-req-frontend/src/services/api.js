@@ -179,6 +179,7 @@ export const serviceVehicleRequestsAPI = {
     }
   }),
   deleteAttachment: (id, filename) => api.delete(`/service-vehicle-requests/${id}/attachments/${filename}`),
+  checkAvailability: (startDate, endDate, pickupTime, dropoffTime) => api.get(`/service-vehicle-requests/availability`, { params: { startDate, endDate, pickupTime, dropoffTime } }),
   assignVerifier: (id, data) => api.post(`/service-vehicle-requests/${id}/assign-verifier`, data),
   verifyRequest: (id, data) => api.post(`/service-vehicle-requests/${id}/verify`, data)
 }
@@ -211,5 +212,10 @@ export const driverManagementApi = {
   update: (id, data) => api.put(`/drivers/${id}`, data),
   delete: (id) => api.delete(`/drivers/${id}`),
 }
+
+// Audit Logs API
+export const auditLogsAPI = {
+  getAll: (params) => api.get('/audit-logs', { params })
+};
 
 export default api;

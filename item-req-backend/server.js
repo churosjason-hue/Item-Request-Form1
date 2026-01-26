@@ -17,6 +17,7 @@ import svrRoutes from './routes/serviceVehicleRequests.js';
 import workflowRoutes from './routes/workflows.js';
 import vehicleRoutes from './routes/vehicles.js';
 import driverRoutes from './routes/drivers.js';
+import auditLogRoutes from './routes/auditLogs.js';
 
 // Import database
 import { sequelize } from './config/database.js';
@@ -67,8 +68,8 @@ app.use('/uploads', express.static(join(__dirname, 'uploads')));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
+  res.status(200).json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
     service: 'IT Equipment Request API'
   });
@@ -83,6 +84,7 @@ app.use('/api/service-vehicle-requests', svrRoutes);
 app.use('/api/workflows', workflowRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/drivers', driverRoutes);
+app.use('/api/audit-logs', auditLogRoutes);
 // Option 1: Serve frontend static files from backend (Single Port Deployment)
 // This allows the backend to serve both API and frontend from the same port
 // Works in both development and production - just needs the dist folder to exist
@@ -91,7 +93,7 @@ const frontendDistPath = join(__dirname, '..', 'item-req-frontend', 'dist');
 // Check if frontend dist folder exists (built frontend)
 if (fs.existsSync(frontendDistPath)) {
   app.use(express.static(frontendDistPath));
-  
+
   // Serve index.html for all non-API routes (SPA routing)
   // This must be LAST, after all API routes and error handlers
   app.get('*', (req, res) => {
@@ -111,21 +113,21 @@ if (fs.existsSync(frontendDistPath)) {
 // Error handling middleware (must be before frontend static serving)
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-  
+
   if (err.name === 'ValidationError') {
     return res.status(400).json({
       error: 'Validation Error',
       details: err.errors?.map(e => e.message) || err.message
     });
   }
-  
+
   if (err.name === 'SequelizeUniqueConstraintError') {
     return res.status(409).json({
       error: 'Duplicate Entry',
       message: 'A record with this information already exists'
     });
   }
-  
+
   res.status(err.status || 500).json({
     error: err.message || 'Internal Server Error',
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
@@ -138,11 +140,11 @@ async function startServer() {
     // Test database connection 
     await sequelize.authenticate();
     console.log('Database connection established successfully.');
-    
+
     // Sync database models
     await sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
     console.log('Database models synchronized.');
-    
+
     // Initialize default data (departments and workflows)
     try {
       const { initializeDefaultData } = await import('./models/index.js');
@@ -150,15 +152,15 @@ async function startServer() {
     } catch (error) {
       console.error('Warning: Failed to initialize default data:', error.message);
     }
-    
+
     // Start server - listen on all interfaces (0.0.0.0) to allow network access
     const HOST = process.env.HOST || '0.0.0.0';
-    
+
     // Get network IP addresses
     const getNetworkIPs = () => {
       const interfaces = os.networkInterfaces();
       const ips = [];
-      
+
       for (const name of Object.keys(interfaces)) {
         for (const iface of interfaces[name]) {
           // Skip internal (loopback) and non-IPv4 addresses
@@ -167,17 +169,17 @@ async function startServer() {
           }
         }
       }
-      
+
       return ips.length > 0 ? ips : ['localhost'];
     };
-    
+
     const networkIPs = getNetworkIPs();
-    
+
     app.listen(PORT, HOST, () => {
       console.log(`\n✅ Server running on ${HOST}:${PORT}`);
       console.log(`\n📍 Access URLs:`);
       console.log(`   Local:    http://localhost:${PORT}`);
-      
+
       if (networkIPs.length > 0) {
         networkIPs.forEach((ip, index) => {
           if (index === 0) {
@@ -187,7 +189,7 @@ async function startServer() {
           }
         });
       }
-      
+
       console.log(`\n📦 Deployment Mode: Option 1 (Single Port)`);
       console.log(`   - API: http://localhost:${PORT}/api/*`);
       console.log(`   - Frontend: http://localhost:${PORT}/*`);
@@ -199,7 +201,7 @@ async function startServer() {
     process.exit(1);
   }
 }
- 
+
 // Handle graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully...');

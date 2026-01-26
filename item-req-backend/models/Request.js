@@ -42,6 +42,21 @@ const Request = sequelize.define('Request', {
     type: DataTypes.DATEONLY,
     allowNull: true
   },
+  current_step_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'workflow_steps',
+      key: 'id'
+    },
+    comment: 'ID of the current workflow step'
+  },
+  pending_approver_ids: {
+    type: DataTypes.ARRAY(DataTypes.INTEGER),
+    allowNull: true,
+    defaultValue: [],
+    comment: 'Array of user IDs who can currently approve this request'
+  },
   reason: {
     type: DataTypes.TEXT,
     allowNull: true,
@@ -121,21 +136,21 @@ const Request = sequelize.define('Request', {
 });
 
 // Instance methods
-Request.prototype.canBeEditedBy = function(user) {
+Request.prototype.canBeEditedBy = function (user) {
   // Requestor can edit draft or returned requests
   if (this.status === 'draft' || this.status === 'returned') {
     return this.requestor_id === user.id;
   }
-  
+
   // Admins can always edit
   if (user.role === 'super_administrator') {
     return true;
   }
-  
+
   return false;
 };
 
-Request.prototype.canBeApprovedBy = function(user) {
+Request.prototype.canBeApprovedBy = function (user) {
   switch (this.status) {
     case 'submitted':
       return user.canApproveForDepartment(this.department_id);
@@ -146,11 +161,11 @@ Request.prototype.canBeApprovedBy = function(user) {
   }
 };
 
-Request.prototype.canBeProcessedBy = function(user) {
+Request.prototype.canBeProcessedBy = function (user) {
   return (this.status === 'it_manager_approved' || this.status === 'service_desk_processing') && user.canProcessRequests();
 };
 
-Request.prototype.getNextStatus = function(action, userRole) {
+Request.prototype.getNextStatus = function (action, userRole) {
   const statusMap = {
     'submitted': {
       'approve': 'department_approved',

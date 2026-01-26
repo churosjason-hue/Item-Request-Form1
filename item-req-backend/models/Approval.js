@@ -98,17 +98,12 @@ const Approval = sequelize.define('Approval', {
     },
     {
       fields: ['status']
-    },
-    {
-      unique: true,
-      fields: ['request_id', 'approval_type'],
-      name: 'unique_request_approval_type'
     }
   ]
 });
 
 // Instance methods
-Approval.prototype.approve = function(comments = null) {
+Approval.prototype.approve = function (comments = null) {
   this.status = 'approved';
   this.comments = comments;
   this.approved_at = new Date();
@@ -116,7 +111,7 @@ Approval.prototype.approve = function(comments = null) {
   this.returned_at = null;
 };
 
-Approval.prototype.decline = function(comments = null) {
+Approval.prototype.decline = function (comments = null) {
   this.status = 'declined';
   this.comments = comments;
   this.declined_at = new Date();
@@ -124,7 +119,7 @@ Approval.prototype.decline = function(comments = null) {
   this.returned_at = null;
 };
 
-Approval.prototype.returnForRevision = function(reason) {
+Approval.prototype.returnForRevision = function (reason) {
   this.status = 'returned';
   this.return_reason = reason;
   this.returned_at = new Date();
@@ -132,24 +127,24 @@ Approval.prototype.returnForRevision = function(reason) {
   this.declined_at = null;
 };
 
-Approval.prototype.getStatusDisplayName = function() {
+Approval.prototype.getStatusDisplayName = function () {
   const statusNames = {
     'pending': 'Pending Review',
     'approved': 'Approved',
     'declined': 'Declined',
     'returned': 'Returned for Revision'
   };
-  
+
   return statusNames[this.status] || this.status;
 };
 
-Approval.prototype.getApprovalTypeDisplayName = function() {
+Approval.prototype.getApprovalTypeDisplayName = function () {
   const typeNames = {
     'department_approval': 'Department Approval',
     'it_manager_approval': 'IT Manager Approval',
     'service_desk_processing': 'Service Desk Processing'
   };
-  
+
   return typeNames[this.approval_type] || this.approval_type;
 };
 

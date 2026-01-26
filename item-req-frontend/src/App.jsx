@@ -12,7 +12,7 @@ import TrackRequest from './components/TrackRequest';
 import ServiceVehicleRequestForm from './components/ServiceVehicleRequestForm';
 import FormSelector from './components/FormSelector';
 import WorkflowSettings from './components/WorkflowSettings';
-
+import AuditLogs from './components/AuditLogs';
 import './App.css';
 
 // Protected Route Component
@@ -49,143 +49,156 @@ function AppRoutes() {
   return (
     <Routes>
       {/* Public Routes */}
-      <Route 
-        path="/login" 
+      <Route
+        path="/login"
         element={
           <PublicRoute>
             <LoginForm />
           </PublicRoute>
-        } 
+        }
       />
-      
-      <Route 
-        path="/track" 
-        element={<TrackRequest />} 
+
+      <Route
+        path="/track"
+        element={<TrackRequest />}
       />
 
       {/* Form Selector Route */}
-      <Route 
-        path="/forms" 
+      <Route
+        path="/forms"
         element={
           <ProtectedRoute>
             <FormSelector />
           </ProtectedRoute>
-        } 
+        }
       />
 
       {/* Protected Routes */}
-      <Route 
-        path="/dashboard" 
+      <Route
+        path="/dashboard"
         element={
           <ProtectedRoute>
             <Dashboard />
           </ProtectedRoute>
-        } 
+        }
       />
-      
-      <Route 
-        path="/requests/new" 
+
+      <Route
+        path="/requests/new"
         element={
           <ProtectedRoute>
             <RequestForm />
           </ProtectedRoute>
-        } 
+        }
       />
-      
-      <Route 
-        path="/requests/:id/edit" 
+
+      <Route
+        path="/requests/:id/edit"
         element={
           <ProtectedRoute>
             <RequestForm />
           </ProtectedRoute>
-        } 
+        }
       />
-      
-      <Route 
-        path="/requests/:id" 
+
+      <Route
+        path="/requests/:id"
         element={
           <ProtectedRoute>
             <RequestForm />
           </ProtectedRoute>
-        } 
+        }
       />
-        <Route 
-        path="/service-vehicle-requests/new" 
+      <Route
+        path="/service-vehicle-requests/new"
         element={
           <ProtectedRoute>
             <ServiceVehicleRequestForm />
           </ProtectedRoute>
-        } 
+        }
       />
-      
-      <Route 
-        path="/service-vehicle-requests/:id/edit" 
+
+      <Route
+        path="/service-vehicle-requests/:id/edit"
         element={
           <ProtectedRoute>
             <ServiceVehicleRequestForm />
           </ProtectedRoute>
-        } 
+        }
       />
-      
-      <Route 
-        path="/service-vehicle-requests/:id" 
+
+      <Route
+        path="/service-vehicle-requests/:id"
         element={
           <ProtectedRoute>
             <ServiceVehicleRequestForm />
           </ProtectedRoute>
-        } 
+        }
       />
-      
- 
-      
-      <Route 
-        path="/users" 
+
+
+
+      <Route
+        path="/users"
         element={
           <ProtectedRoute>
             <UserManagement />
           </ProtectedRoute>
-        } 
+        }
       />
-      
-      <Route 
-        path="/departments" 
+
+      <Route
+        path="/departments"
         element={
           <ProtectedRoute>
             <DepartmentManagement />
           </ProtectedRoute>
-        } 
+        }
       />
-      
-      <Route 
-        path="/settings/workflows" 
+
+      <Route
+        path="/settings/workflows"
         element={
           <ProtectedRoute>
             <WorkflowSettings />
           </ProtectedRoute>
-        } 
+        }
+      />
+
+      <Route
+        path="/audit-logs"
+        element={
+          <ProtectedRoute>
+            <AuditLogs />
+          </ProtectedRoute>
+        }
       />
 
       {/* Default redirect */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      
+
       {/* Catch all route */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
 }
 
+import { ThemeProvider } from './contexts/ThemeContext';
+
 function App() {
   return (
-    <ToastProvider>
-      <AuthProvider>
-        <Router>
-          <div className="App">
-            <Toast />
-            <AppRoutes />
-          </div>
-        </Router>
-      </AuthProvider>
-    </ToastProvider>
+    <ThemeProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <Router>
+            <div className="App dark:bg-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
+              <Toast />
+              <AppRoutes />
+            </div>
+          </Router>
+        </AuthProvider>
+      </ToastProvider>
+    </ThemeProvider>
   );
 }
 

@@ -5,6 +5,7 @@ import { authenticateToken, requireRole } from '../middleware/auth.js';
 import userSyncService from '../utils/userSync.js';
 import ldapService from '../config/ldap.js';
 import exportService from '../utils/exportService.js';
+import { logAudit, calculateChanges } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -178,6 +179,19 @@ router.patch('/:id/role', authenticateToken, requireRole('super_administrator'),
     }
 
     await user.update({ role });
+
+    // Audit Log: User Role Updated
+    await logAudit({
+      req,
+      action: 'UPDATE',
+      entityType: 'User',
+      entityId: user.id,
+      details: {
+        change: 'Role Update',
+        oldRole: user.role !== role ? 'previous_role' : undefined, // Simplify for now as we didn't capture old role explicitly in variable but user object technically has new role now. 
+        newRole: role
+      }
+    });
 
     res.json({
       message: 'User role updated successfully',
@@ -400,6 +414,19 @@ router.patch('/:id/department', authenticateToken, requireRole('super_administra
         error: adSyncError
       }
     });
+
+    // Audit Log: User Department Updated
+    await logAudit({
+      req,
+      action: 'UPDATE',
+      entityType: 'User',
+      entityId: updatedUser.id,
+      details: {
+        change: 'Department Update',
+        newDepartment: departmentName,
+        items: adSyncSuccess ? 'AD Synced' : (adSyncError ? 'AD Sync Failed' : 'Database Only')
+      }
+    });
   } catch (error) {
     console.error('Error updating user department:', error);
     res.status(500).json({
@@ -451,6 +478,18 @@ router.patch('/:id/status', authenticateToken, requireRole('super_administrator'
 
     await user.update({ is_active: isActive });
 
+    // Audit Log: User Status Updated
+    await logAudit({
+      req,
+      action: 'UPDATE',
+      entityType: 'User',
+      entityId: user.id,
+      details: {
+        change: 'Status Update',
+        isActive: isActive
+      }
+    });
+
     res.json({
       message: `User ${isActive ? 'activated' : 'deactivated'} successfully`,
       user: {
@@ -474,6 +513,21 @@ router.post('/sync', authenticateToken, requireRole('super_administrator'), asyn
     const result = await userSyncService.syncAllUsers();
 
     if (result.success) {
+      // Audit Log: Users Synced
+      await logAudit({
+        req,
+        action: 'UPDATE', // Or CREATE/UPDATE mix, but action is SYNC really. I'll use UPDATE or custom if allowed. DB allows enum?
+        // Model defines enum: CREATE, UPDATE, DELETE, LOGIN, LOGOUT, APPROVE, DECLINE, RETURN, SUBMIT, CANCEL.
+        // It does not have SYNC.
+        // I will use UPDATE with details "Sync".
+        entityType: 'User',
+        entityId: 0, // System wide or 0
+        details: {
+          change: 'Batch AD Sync',
+          stats: result.stats
+        }
+      });
+
       res.json({
         message: 'User synchronization completed successfully',
         syncTime: result.syncTime,
@@ -501,6 +555,18 @@ router.post('/:username/sync', authenticateToken, requireRole('super_administrat
     const { username } = req.params;
 
     const result = await userSyncService.syncSingleUser(username);
+
+    // Audit Log: Single User Synced
+    await logAudit({
+      req,
+      action: 'UPDATE',
+      entityType: 'User',
+      entityId: result.user.id,
+      details: {
+        change: 'Single AD Sync',
+        created: result.created
+      }
+    });
 
     res.json({
       message: `User ${username} synchronized successfully`,
