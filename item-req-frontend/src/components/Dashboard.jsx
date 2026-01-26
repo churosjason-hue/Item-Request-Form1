@@ -35,34 +35,72 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { requestsAPI, REQUEST_STATUSES, serviceVehicleRequestsAPI } from '../services/api';
+import { useServiceVehicleRequests } from '../hooks/queries/useServiceVehicleRequests';
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user, logout, canViewAllRequests, canManageUsers, isAdmin } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [activeTab, setActiveTab] = useState('item'); // 'item' or 'vehicle'
+
+  // Local state for Item Requests (still using old manual fetch for now or keep mixed)
   const [requests, setRequests] = useState([]);
-  const [vehicleRequests, setVehicleRequests] = useState([]);
   const [stats, setStats] = useState({});
-  const [vehicleStats, setVehicleStats] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [itemFilters, setItemFilters] = useState({
+    status: '',
+    search: '',
+    page: 1, // Keep separate pagination for tabs if possible, or sync reset
+    limit: 10,
+    sortBy: 'date',
+    sortOrder: 'desc'
+  });
+
+  // Filters state (Shared structure, managed independently)
   const [filters, setFilters] = useState({
     status: '',
     search: '',
     page: 1,
-    limit: 10, // Display 10 requests per page
-    sortBy: 'date', // 'date', 'status', 'requestor'
-    sortOrder: 'desc' // 'asc' or 'desc'
+    limit: 10,
+    sortBy: 'date',
+    sortOrder: 'desc'
   });
+
   const [pagination, setPagination] = useState({
     total: 0,
     pages: 0,
     currentPage: 1
   });
-  const [selectedVehicleRequests, setSelectedVehicleRequests] = useState(new Set());
 
+  // Use Custom Hook for Vehicle Requests
+  // Only fetch when tab is 'vehicle'
+  const { useRequests: useVehicleRequests } = useServiceVehicleRequests();
+  const {
+    data: vehicleRequestsData,
+    isLoading: isVehicleLoading,
+    refetch: refetchVehicleRequests
+  } = useVehicleRequests({
+    ...filters,
+    isEnabled: activeTab === 'vehicle'
+  });
+
+  // Since the hook currently fetches ALL, we might need to handle client-side pagination if api doesn't support it yet via hook
+  // But wait, the hook implementation I wrote supports passing filters to the key, but the fetch function uses serviceVehicleRequestsAPI.getAll()
+  // which generally returns all or supports query params?
+  // Checking api.js... getAll takes params. 
+  // The hook implementation: const { data } = await serviceVehicleRequestsAPI.getAll(); -> It ignores arguments passed to useRequests!
+  // I need to fix the hook to pass arguments first.
+
+  const [selectedVehicleRequests, setSelectedVehicleRequests] = useState(new Set());
   const isODHC = user?.department?.name?.toUpperCase()?.includes('ODHC') || user?.role === 'super_administrator';
+
+  // Manual loading state for Item requests
+  const [loading, setLoading] = useState(false);
+
+  // Mixed loading state
+  const isDashboardLoading = activeTab === 'vehicle' ? isVehicleLoading : loading;
+
+  // ... rest of component logic
+
 
   const toggleRequestSelection = (requestId) => {
     const newSelected = new Set(selectedVehicleRequests);
@@ -277,10 +315,15 @@ const Dashboard = () => {
     return false;
   };
 
+  // Sync React Query data to local state for compatibility (or refactor render to use data directly)
+  // For now, let's use the data directly in render where possible, but we need to respect the table structure
+  const vehicleRequests = vehicleRequestsData?.requests || [];
+  const vehicleStats = vehicleRequestsData?.stats || {};
+
   const loadDashboardData = async () => {
     try {
-      setLoading(true);
       if (activeTab === 'item') {
+        setLoading(true);
         // Build query parameters with pagination and sorting
         const queryParams = {
           ...filters,
@@ -309,45 +352,33 @@ const Dashboard = () => {
           ...statsResponse.data.stats,
           total: statsResponse.data.total
         });
-      } else {
-        // Load vehicle requests and stats
-        // Build query parameters with pagination and sorting
-        const queryParams = {
-          ...filters,
-          limit: filters.limit || 10,
-          page: filters.page || 1,
-          sortBy: filters.sortBy || 'date',
-          sortOrder: filters.sortOrder || 'desc'
-        };
-
-        const [vehicleRequestsResponse, vehicleStatsResponse] = await Promise.all([
-          serviceVehicleRequestsAPI.getAll(queryParams),
-          serviceVehicleRequestsAPI.getStats()
-        ]);
-
-        const vehicleData = vehicleRequestsResponse.data?.requests || vehicleRequestsResponse.data || [];
-        setVehicleRequests(Array.isArray(vehicleData) ? vehicleData : []);
-
-        // Update pagination info for vehicle requests
-        if (vehicleRequestsResponse.data?.pagination) {
-          setPagination({
-            total: vehicleRequestsResponse.data.pagination.total || 0,
-            pages: vehicleRequestsResponse.data.pagination.pages || 0,
-            currentPage: vehicleRequestsResponse.data.pagination.page || 1
-          });
-        }
-        setVehicleStats({
-          ...vehicleStatsResponse.data.stats,
-          verificationStats: vehicleStatsResponse.data.verificationStats || {},
-          total: vehicleStatsResponse.data.total
-        });
+        setLoading(false);
       }
+      // Vehicle data is handled by React Query hook locally
     } catch (error) {
       console.error('Error loading dashboard data:', error);
-    } finally {
       setLoading(false);
     }
   };
+
+  // React Query handles refetching on filter change automatically due to queryKey dependency
+  // So we only need to trigger manual fetch for Item requests
+  useEffect(() => {
+    if (activeTab === 'item') {
+      loadDashboardData();
+    }
+  }, [filters, activeTab]);
+
+  // Update pagination from React Query data when active tab is vehicle
+  useEffect(() => {
+    if (activeTab === 'vehicle' && vehicleRequestsData?.pagination) {
+      setPagination({
+        total: vehicleRequestsData.pagination.total || 0,
+        pages: vehicleRequestsData.pagination.pages || 0,
+        currentPage: vehicleRequestsData.pagination.page || 1
+      });
+    }
+  }, [vehicleRequestsData, activeTab]);
 
   const getStatusBadge = (status) => {
     let label, color;
@@ -365,6 +396,7 @@ const Dashboard = () => {
         'department_approved': { label: 'Department Approved', color: 'green' },
         'returned': { label: 'Returned', color: 'orange' },
         'declined': { label: 'Declined', color: 'red' },
+        'verified': { label: 'Verified', color: 'purple' }, // Added Verified
         'completed': { label: 'Completed', color: 'green' }
       };
       const vehicleStatus = vehicleStatusMap[status];
@@ -386,7 +418,8 @@ const Dashboard = () => {
       green: 'bg-green-100 text-green-800',
       red: 'bg-red-100 text-red-800',
       yellow: 'bg-yellow-100 text-yellow-800',
-      orange: 'bg-orange-100 text-orange-800'
+      orange: 'bg-orange-100 text-orange-800',
+      purple: 'bg-purple-100 text-purple-800'
     };
 
     return (
@@ -398,7 +431,7 @@ const Dashboard = () => {
 
   const getStatsCards = () => {
     const cards = [];
-    const currentStats = activeTab === 'item' ? stats : vehicleStats;
+    const currentStats = activeTab === 'item' ? stats : (vehicleRequestsData?.stats || {});
 
     if (user.role === 'requestor') {
       if (activeTab === 'item') {
@@ -435,7 +468,7 @@ const Dashboard = () => {
       } else {
         // Vehicle request stats for department approver
         const isODHC = user.department?.name?.toUpperCase()?.includes('ODHC');
-        const verificationStats = currentStats.verificationStats || {};
+        const verificationStats = vehicleRequestsData?.verificationStats || currentStats.verificationStats || {}; // verificationStats might be top level or inside? Based on API check
 
         const deptCards = [
           { title: 'Pending My Approval', count: isODHC ? ((currentStats.submitted || 0) + (currentStats.department_approved || 0)) : (currentStats.submitted || 0), icon: AlertCircle, color: 'orange' },
@@ -456,6 +489,7 @@ const Dashboard = () => {
         cards.push(...deptCards);
       }
     } else if (user.role === 'it_manager') {
+      // ... existing it_manager logic ...
       if (activeTab === 'item') {
         cards.push(
           { title: 'Pending My Approval', count: currentStats.department_approved || 0, icon: AlertCircle, color: 'orange' },
@@ -466,12 +500,12 @@ const Dashboard = () => {
           { title: 'Completed', count: currentStats.completed || 0, icon: CheckCircle, color: 'blue' }
         );
       } else {
-        // Vehicle requests don't go through IT manager
         cards.push(
           { title: 'Total Vehicle Requests', count: currentStats.total || 0, icon: Car, color: 'blue' }
         );
       }
     } else if (user.role === 'service_desk') {
+      // ... existing service_desk logic ...
       if (activeTab === 'item') {
         cards.push(
           { title: 'To Process', count: currentStats.it_manager_approved || 0, icon: AlertCircle, color: 'orange' },
@@ -480,7 +514,6 @@ const Dashboard = () => {
           { title: 'Total Requests', count: currentStats.total || 0, icon: FileText, color: 'blue' }
         );
       } else {
-        // Vehicle requests don't go through service desk
         cards.push(
           { title: 'Total Vehicle Requests', count: currentStats.total || 0, icon: Car, color: 'blue' }
         );

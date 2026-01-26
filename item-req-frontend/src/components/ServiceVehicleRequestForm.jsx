@@ -20,12 +20,9 @@ import { useAuth } from "../contexts/AuthContext";
 import { ToastContext } from "../contexts/ToastContext";
 import { validateServiceVehicleForm } from "../helpers/validations";
 import STC_LOGO from "../assets/STC_LOGO.png";
-import {
-  serviceVehicleRequestsAPI,
-  departmentsAPI,
-  vehicleManagementApi,
-  driverManagementApi,
-} from "../services/api";
+import { serviceVehicleRequestsAPI } from "../services/api"; // Keep explicitly for checkAvailability for now or refactor
+import { useServiceVehicleRequests } from "../hooks/queries/useServiceVehicleRequests";
+import { useMasterData } from "../hooks/queries/useMasterData";
 
 import ConfirmDialog from "./ConfirmDialog";
 import ActionModal from "./ActionModal";
@@ -56,7 +53,26 @@ export default function ServiceVehicleRequestForm() {
   const { success: toastSuccess, error: toastError, warning: toastWarning } = useContext(ToastContext);
   const location = useLocation();
 
+  // Custom Hooks
+  const {
+    useRequest,
+    createRequest,
+    updateRequest,
+    submitRequest,
+    approveRequest,
+    declineRequest,
+    returnRequest,
+    assignVerifier,
+    verifyRequest
+  } = useServiceVehicleRequests(id);
 
+  const { useDepartments, useVehicles, useDrivers } = useMasterData();
+
+  // Queries
+  const { data: requestData, isLoading: isRequestLoading, error: requestError } = useRequest();
+  const { data: departments = [] } = useDepartments(true);
+  const { data: availableVehicles = [] } = useVehicles();
+  const { data: availableDrivers = [] } = useDrivers();
 
   const [formData, setFormData] = useState({
     requestor_name: "",
@@ -94,25 +110,28 @@ export default function ServiceVehicleRequestForm() {
     approval_date: "",
     urgency_justification: "",
   });
+
   const [errors, setErrors] = useState({});
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false); // Local loading for non-mutation async ops or interim states
   const [successMessage, setSuccessMessage] = useState("");
   const [isODHCUser, setIsODHCUser] = useState(false);
-  const [attachments, setAttachments] = useState([]);
+  const [attachments, setAttachments] = useState([]); // Still handle attachments locally or separate mutation?
+  // Attachments usually uploaded separately or with create/update. Current API handles it with update?
+  // For now, keep local state and pass to mutation.
+
   const [pendingFiles, setPendingFiles] = useState([]); // Files selected before request is saved
   const [uploadingFiles, setUploadingFiles] = useState(false);
-  const [availableVehicles, setAvailableVehicles] = useState([]);
+
+  // const [availableVehicles, setAvailableVehicles] = useState([]); -> Replaced by hook
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [requestorDepartment, setRequestorDepartment] = useState("");
-  const [availableDrivers, setAvailableDrivers] = useState([]);
+  // const [availableDrivers, setAvailableDrivers] = useState([]); -> Replaced by hook
   const [showJustificationModal, setShowJustificationModal] = useState(false);
   const [justificationReason, setJustificationReason] = useState("");
-  // Signature modal state moved to SignatureSection component
   const [showVerifierModal, setShowVerifierModal] = useState(false);
   const [bookedResources, setBookedResources] = useState({ vehicleIds: [], driverNames: [] });
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [showVerificationActionModal, setShowVerificationActionModal] = useState(false);
-
   const [verificationAction, setVerificationAction] = useState(null);
 
   // New Modal States
@@ -121,9 +140,76 @@ export default function ServiceVehicleRequestForm() {
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnOptions, setReturnOptions] = useState([]);
 
-
   const isEditing = location.pathname.includes("/edit/");
   const isViewing = !!id && !isEditing;
+
+  // Initialize form with Request Data when loaded
+  useEffect(() => {
+    if (requestData) {
+      // logic to populate formData from requestData
+      // Only if we are viewing or editing. 
+      // This replaces loadFormData
+      initializeFormData(requestData);
+    }
+  }, [requestData]);
+
+  const initializeFormData = (data) => {
+    // Map API data to form state (reuse logic from loadFormData but sync)
+    const mappedData = {
+      // ... default fields ...
+      requestor_name: data.RequestedByUser?.fullName || data.requestor_name || "",
+      date_prepared: data.created_at ? new Date(data.created_at).toISOString().split('T')[0] : "",
+      department_id: data.department_id || "",
+      contact_number: data.contact_number || "",
+      purpose: data.purpose || "",
+      request_type: data.request_type || "",
+      travel_date_from: data.travel_date_from ? new Date(data.travel_date_from).toISOString().split('T')[0] : "",
+      travel_date_to: data.travel_date_to ? new Date(data.travel_date_to).toISOString().split('T')[0] : "",
+      pick_up_location: data.pick_up_location || "",
+      pick_up_time: data.pick_up_time || "",
+      drop_off_location: data.drop_off_location || "",
+      drop_off_time: data.drop_off_time || "",
+      passengers: data.passengers && data.passengers.length > 0 ? data.passengers : [{ name: "" }],
+      destination: data.destination || "",
+      departure_time: data.departure_time || "",
+      destination_car: data.destination_car || "",
+      has_valid_license: data.has_valid_license ? "yes" : "no",
+      license_number: data.license_number || "",
+      expiration_date: data.expiration_date ? new Date(data.expiration_date).toISOString().split('T')[0] : "",
+      requestor_signature: data.requestor_signature || "",
+      requested_by_date: data.requested_by_date ? new Date(data.requested_by_date).toISOString().split('T')[0] : "",
+      item_description: data.item_description || "",
+      item_pick_up_location: data.item_pick_up_location || "",
+      item_pick_up_time: data.item_pick_up_time || "",
+      item_drop_off_location: data.item_drop_off_location || "",
+      item_drop_off_time: data.item_drop_off_time || "",
+      item_quantity: data.item_quantity || "",
+      recipient_name: data.recipient_name || "",
+      recipient_contact: data.recipient_contact || "",
+      status: data.status,
+      assigned_driver: data.assigned_driver || "",
+      assigned_vehicle: data.assigned_vehicle || "",
+      approval_date: data.approval_date || "",
+      urgency_justification: data.urgency_justification || "",
+      isPendingMyApproval: data.isPendingMyApproval,
+    };
+
+    setFormData(prev => ({ ...prev, ...mappedData }));
+    setAttachments(data.attachments || []);
+
+    if (data.Department) {
+      setRequestorDepartment(data.Department.name);
+      // Check ODHC logic
+      const isODHC = data.Department.name?.toUpperCase()?.includes('ODHC');
+      setIsODHCUser(isODHC || user?.role === 'super_administrator');
+    }
+
+    // Handle vehicle selection if assigned
+    if (data.assigned_vehicle && availableVehicles.length > 0) {
+      const vehicle = availableVehicles.find(v => v.id.toString() === data.assigned_vehicle.toString());
+      if (vehicle) setSelectedVehicle(vehicle);
+    }
+  };
 
   // Check availability when travel dates change
   useEffect(() => {
@@ -186,1806 +272,1812 @@ export default function ServiceVehicleRequestForm() {
     const userData = localStorage.getItem("user");
     let userDepartmentId = "";
 
-    if (userData) {
-      try {
-        const parsedUser = JSON.parse(userData);
-        userDepartmentId = parsedUser.department?.id || "";
-      } catch (error) {
-        console.error("Error parsing user data from localStorage:", error);
-      }
+    // ... existing user initialization logic ...
+
+    // Set initial ODHC check
+    if (user?.department?.name?.toUpperCase()?.includes('ODHC') || user?.role === 'super_administrator') {
+      setIsODHCUser(true);
     }
 
-    // Only set current user's department if creating a new request
-    // If loading existing request, let loadFormData handle it
     if (!id) {
-      setFormData((prev) => ({
+      // Only set if creating new
+      setFormData(prev => ({
         ...prev,
         requestor_name: userFullName,
-        department_id: userDepartmentId || "",
-        date_prepared: new Date().toISOString().split('T')[0],
-        requested_by_date: new Date().toISOString().split('T')[0],
-      }));
-    } else {
-      // For existing requests, only update requestor_name if not already set
-      setFormData((prev) => ({
-        ...prev,
-        requestor_name: prev.requestor_name || userFullName,
-        requested_by_signature: prev.requested_by_signature || userFullName,
+        department_id: user?.department?.id || "",
+        date_prepared: new Date().toISOString().split('T')[0]
       }));
     }
+  }, [id, user]);
 
-    // Check if user is from ODHC department
-    if (userData) {
-      try {
-        const parsedUser = JSON.parse(userData);
-        const departmentName = parsedUser.department?.name || "";
-        const isODHC =
-          departmentName.toLowerCase().includes("odhc") &&
-          parsedUser.role === "department_approver";
-        setIsODHCUser(isODHC);
-      } catch (error) {
-        console.error("Error parsing user data:", error);
-      }
-    }
+  setFormData((prev) => ({
+    ...prev,
+    requestor_name: userFullName,
+    department_id: userDepartmentId || "",
+    date_prepared: new Date().toISOString().split('T')[0],
+    requested_by_date: new Date().toISOString().split('T')[0],
+  }));
+} else {
+  // For existing requests, only update requestor_name if not already set
+  setFormData((prev) => ({
+    ...prev,
+    requestor_name: prev.requestor_name || userFullName,
+    requested_by_signature: prev.requested_by_signature || userFullName,
+  }));
+}
 
-    // Load existing request from database if editing
-    if (id) {
-      loadFormData(id);
-    }
+// Check if user is from ODHC department
+if (userData) {
+  try {
+    const parsedUser = JSON.parse(userData);
+    const departmentName = parsedUser.department?.name || "";
+    const isODHC =
+      departmentName.toLowerCase().includes("odhc") &&
+      parsedUser.role === "department_approver";
+    setIsODHCUser(isODHC);
+  } catch (error) {
+    console.error("Error parsing user data:", error);
+  }
+}
 
-    // Fetch available vehicles and drivers
-    loadAvailableVehicles();
-    loadAvailableDrivers();
+// Load existing request from database if editing
+if (id) {
+  loadFormData(id);
+}
+
+// Fetch available vehicles and drivers
+loadAvailableVehicles();
+loadAvailableDrivers();
   }, [user, id]);
 
-  const loadAvailableVehicles = async () => {
-    try {
-      const response = await vehicleManagementApi.getAll();
-      setAvailableVehicles(response.data || []);
-    } catch (error) {
-      console.error("Error fetching available vehicles:", error);
-      setAvailableVehicles([]);
-    }
-  };
+const loadAvailableVehicles = async () => {
+  try {
+    const response = await vehicleManagementApi.getAll();
+    setAvailableVehicles(response.data || []);
+  } catch (error) {
+    console.error("Error fetching available vehicles:", error);
+    setAvailableVehicles([]);
+  }
+};
 
-  const loadAvailableDrivers = async () => {
-    try {
-      const response = await driverManagementApi.getAll();
-      // Filter only active drivers
-      const activeDrivers = (
-        response.data?.drivers ||
-        response.data ||
-        []
-      ).filter((driver) => driver.status === "active");
-      setAvailableDrivers(activeDrivers);
-    } catch (error) {
-      console.error("Error fetching available drivers:", error);
-      setAvailableDrivers([]);
-    }
-  };
+const loadAvailableDrivers = async () => {
+  try {
+    const response = await driverManagementApi.getAll();
+    // Filter only active drivers
+    const activeDrivers = (
+      response.data?.drivers ||
+      response.data ||
+      []
+    ).filter((driver) => driver.status === "active");
+    setAvailableDrivers(activeDrivers);
+  } catch (error) {
+    console.error("Error fetching available drivers:", error);
+    setAvailableDrivers([]);
+  }
+};
 
-  const loadFormData = async (requestId) => {
-    try {
-      setLoading(true);
-      const response = await serviceVehicleRequestsAPI.getById(requestId);
-      // Extract request object from response if it exists
-      const data = response.data.request || response.data;
-      console.log("Loaded vehicle request data:", data);
-      console.log("Request status:", data.status);
-      console.log("User role:", user?.role);
+const loadFormData = async (requestId) => {
+  try {
+    setLoading(true);
+    const response = await serviceVehicleRequestsAPI.getById(requestId);
+    // Extract request object from response if it exists
+    const data = response.data.request || response.data;
+    console.log("Loaded vehicle request data:", data);
+    console.log("Request status:", data.status);
+    console.log("User role:", user?.role);
 
-      // Ensure passengers is always an array
-      // If passengers exists and is an array, use it; otherwise default to empty array with one empty passenger
-      if (!data.passengers || !Array.isArray(data.passengers)) {
-        // If passengers is a string (old format), convert it
-        if (data.passengers && typeof data.passengers === "string") {
-          data.passengers = [{ name: data.passengers }];
-        } else {
-          // Default to one empty passenger field
-          data.passengers = [{ name: "" }];
-        }
+    // Ensure passengers is always an array
+    // If passengers exists and is an array, use it; otherwise default to empty array with one empty passenger
+    if (!data.passengers || !Array.isArray(data.passengers)) {
+      // If passengers is a string (old format), convert it
+      if (data.passengers && typeof data.passengers === "string") {
+        data.passengers = [{ name: data.passengers }];
       } else {
-        // Ensure all passenger objects have the name property
-        data.passengers = data.passengers.map((p) =>
-          typeof p === "string" ? { name: p } : p && p.name ? p : { name: "" }
-        );
-        // If array is empty, add one empty passenger
-        if (data.passengers.length === 0) {
-          data.passengers = [{ name: "" }];
-        }
-      }
-
-      // Map requested_date to requested_by_date for Section 4 signature
-      if (data.requested_date && !data.requested_by_date) {
-        // Format the date to YYYY-MM-DD if it's a full datetime
-        const dateValue = new Date(data.requested_date);
-        if (!isNaN(dateValue.getTime())) {
-          data.requested_by_date = dateValue.toISOString().split("T")[0];
-        }
-      }
-
-      // Map approval_date to date format if needed
-      if (data.approval_date) {
-        const approvalDateValue = new Date(data.approval_date);
-        if (!isNaN(approvalDateValue.getTime())) {
-          data.approval_date = approvalDateValue.toISOString().split("T")[0];
-        }
-      }
-
-      // Ensure all required fields have default values
-      setFormData({
-        ...formData,
-        ...data,
-        passengers: data.passengers || [{ name: "" }],
-        requested_by_date:
-          data.requested_by_date ||
-          (data.requested_date
-            ? new Date(data.requested_date).toISOString().split("T")[0]
-            : ""),
-        assigned_driver: data.assigned_driver || "",
-        assigned_vehicle: data.assigned_vehicle || "",
-        approval_date: data.approval_date || "",
-      });
-
-      // Store the requestor's department from loaded data
-      if (data.Department) {
-        setRequestorDepartment(data.Department.name);
-      } else {
-        setRequestorDepartment("");
-      }
-
-      // Load attachments
-      if (data.attachments && Array.isArray(data.attachments)) {
-        setAttachments(data.attachments);
-      } else {
-        setAttachments([]);
-      }
-
-      // If assigned_vehicle is set, find and set the vehicle details
-      // Try to find from loaded availableVehicles, if not found, it will be displayed from formData
-      if (data.assigned_vehicle) {
-        // First check if availableVehicles is already loaded
-        if (availableVehicles.length > 0) {
-          const vehicle = availableVehicles.find(
-            (v) => v.id === parseInt(data.assigned_vehicle)
-          );
-          if (vehicle) {
-            setSelectedVehicle(vehicle);
-          }
-        } else {
-          // If vehicles not yet loaded, we'll rely on the fallback logic in the render
-          setSelectedVehicle(null);
-        }
-      }
-    } catch (error) {
-      console.error("Error loading form data:", error);
-      toastError("Error loading request data");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
-    // Clear error for this field when user starts typing
-    if (errors[name]) {
-      setErrors({ ...errors, [name]: undefined });
-    }
-
-    // If assigning a vehicle, update the selectedVehicle state
-    if (name === "assigned_vehicle" && value) {
-      const vehicle = availableVehicles.find((v) => v.id === parseInt(value));
-      setSelectedVehicle(vehicle || null);
-    } else if (name === "assigned_vehicle") {
-      setSelectedVehicle(null);
-    }
-  };
-
-
-
-
-  // Helper to check if a resource is available
-  const isVehicleAvailable = (vehicleId) => {
-    if (loading || availabilityLoading) return true; // Assume available while loading
-    if (!vehicleId) return true;
-    if (vehicleId === parseInt(formData.assigned_vehicle)) return true;
-    return !bookedResources.vehicleIds.includes(vehicleId);
-  };
-
-  const isDriverAvailable = (driverName) => {
-    if (loading || availabilityLoading) return true;
-    if (!driverName) return true;
-    if (driverName === formData.assigned_driver) return true;
-    return !bookedResources.driverNames.includes(driverName);
-  };
-
-  const handlePassengerChange = (index, field, value) => {
-    const currentPassengers = formData.passengers || [{ name: "" }];
-    const updatedPassengers = [...currentPassengers];
-    updatedPassengers[index][field] = value;
-    setFormData({ ...formData, passengers: updatedPassengers });
-  };
-
-  const addPassenger = () => {
-    const currentPassengers = formData.passengers || [{ name: "" }];
-    setFormData({
-      ...formData,
-      passengers: [...currentPassengers, { name: "" }],
-    });
-  };
-
-  const removePassenger = (index) => {
-    const currentPassengers = formData.passengers || [{ name: "" }];
-    const updatedPassengers = currentPassengers.filter((_, i) => i !== index);
-    setFormData({ ...formData, passengers: updatedPassengers });
-  };
-
-  const handleJustificationSubmit = () => {
-    if (!justificationReason.trim()) {
-      toastWarning("Please provide a justification for the same-day request.");
-      return;
-    }
-    setFormData(prev => ({ ...prev, urgency_justification: justificationReason }));
-    setShowJustificationModal(false);
-    handleSubmit(justificationReason);
-  };
-
-  const handleSubmit = async (arg = null) => {
-    const justificationOverride = typeof arg === 'string' ? arg : null;
-
-    // Check for same-day request justification
-    const isSameDay = formData.date_prepared === formData.travel_date_from;
-    const hasJustification = justificationOverride || formData.urgency_justification;
-
-    if (isSameDay && !hasJustification) {
-      setShowJustificationModal(true);
-      return;
-    }
-
-    // Validate dates before form validation
-    const dateFields = [
-      "date_prepared",
-      "travel_date_from",
-      "travel_date_to",
-      "expiration_date",
-    ];
-    const cleanedFormData = { ...formData, status: "draft" }; // Save as draft first
-    if (justificationOverride) {
-      cleanedFormData.urgency_justification = justificationOverride;
-    }
-
-    dateFields.forEach((field) => {
-      if (cleanedFormData[field] && cleanedFormData[field].trim() === "") {
-        cleanedFormData[field] = null;
-      }
-    });
-
-    // Validate with submitted status for validation rules
-    const validationData = { ...cleanedFormData, status: "submitted" };
-    const validation = validateServiceVehicleForm(validationData);
-
-    if (!validation.isValid) {
-      setErrors(validation.errors);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setErrors({});
-
-      const dataToSubmit = { ...cleanedFormData };
-
-      let requestId = id;
-
-      if (id) {
-        // Update existing request (as draft)
-        await serviceVehicleRequestsAPI.update(id, dataToSubmit);
-        requestId = id;
-      } else {
-        // Create new request (as draft)
-        const response = await serviceVehicleRequestsAPI.create(dataToSubmit);
-        // Handle different response structures - ServiceVehicleRequest uses 'id' field mapped to 'request_id' in DB
-        requestId =
-          response.data?.request?.id ||
-          response.data?.request?.request_id ||
-          response.data?.id;
-
-        if (!requestId) {
-          console.error("Response structure:", response.data);
-          throw new Error("Could not determine request ID from response");
-        }
-      }
-
-      // Upload pending files if any
-      if (pendingFiles.length > 0 && requestId) {
-        try {
-          const uploadFormData = new FormData();
-          pendingFiles.forEach((file) => {
-            uploadFormData.append("files", file);
-          });
-
-          const uploadResponse = await serviceVehicleRequestsAPI.uploadAttachments(
-            requestId,
-            uploadFormData
-          );
-
-          if (uploadResponse.data.success) {
-            setAttachments((prev) => [...prev, ...uploadResponse.data.attachments]);
-            setPendingFiles([]); // Clear pending files after upload
-          }
-        } catch (uploadError) {
-          console.error("Error uploading pending files:", uploadError);
-          // Continue with submission even if file upload fails
-        }
-      }
-
-      // Now submit the request (this will trigger email notifications)
-      if (requestId) {
-        await serviceVehicleRequestsAPI.submit(requestId);
-        toastSuccess("Service Vehicle Request submitted successfully!");
-      } else {
-        throw new Error("Failed to get request ID after creation");
-      }
-
-      setTimeout(() => {
-        navigate("/dashboard");
-      }, 2000);
-    } catch (error) {
-      console.error("Error submitting form:", error);
-
-      "Error submitting request. Please try again.";
-
-      toastError(errorMessage);
-      setErrors({ submit: errorMessage });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSaveDraft = async () => {
-    try {
-      setLoading(true);
-
-      const dataToSave = { ...formData, status: "draft" };
-
-      let requestId = id;
-
-      if (id) {
-        // Update existing draft
-        await serviceVehicleRequestsAPI.update(id, dataToSave);
-        requestId = id;
-        toastSuccess("Draft updated successfully!");
-      } else {
-        // Create new draft
-        const response = await serviceVehicleRequestsAPI.create(dataToSave);
-        requestId =
-          response.data?.request?.id ||
-          response.data?.request?.request_id ||
-          response.data?.id;
-        toastSuccess("Form saved as draft successfully!");
-      }
-
-      // Upload pending files if any
-      if (pendingFiles.length > 0 && requestId) {
-        try {
-          const uploadFormData = new FormData();
-          pendingFiles.forEach((file) => {
-            uploadFormData.append("files", file);
-          });
-
-          const uploadResponse = await serviceVehicleRequestsAPI.uploadAttachments(
-            requestId,
-            uploadFormData
-          );
-
-          if (uploadResponse.data.success) {
-            setAttachments((prev) => [...prev, ...uploadResponse.data.attachments]);
-            setPendingFiles([]); // Clear pending files after upload
-          }
-        } catch (uploadError) {
-          console.error("Error uploading pending files:", uploadError);
-          // Continue even if file upload fails
-        }
-      }
-
-      // If this was a new request, navigate to the edit page
-      if (!id && requestId) {
-        setTimeout(() => {
-          navigate(`/service-vehicle-requests/${requestId}`);
-        }, 1500);
-      } else {
-        setTimeout(() => {
-          navigate("/dashboard");
-        }, 1500);
-      }
-    } catch (error) {
-      console.error("Error saving draft:", error);
-      setErrors({ submit: "Error saving draft. Please try again." });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAssignVerifierClick = () => setShowVerifierModal(true);
-
-  const handleAssignVerifier = async (verifierId) => {
-    try {
-      setLoading(true);
-      await serviceVehicleRequestsAPI.assignVerifier(id, { verifier_id: verifierId });
-      toastSuccess('Verifier assigned successfully');
-      setShowVerifierModal(false);
-      setTimeout(() => navigate('/dashboard'), 1500);
-    } catch (err) {
-      setErrors({ submit: err.message || "Failed to assign verifier" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerifyClick = (action) => {
-    setVerificationAction(action);
-    setShowVerificationActionModal(true);
-  };
-
-  const handleVerificationConfirm = async (comments) => {
-    try {
-      setLoading(true);
-      await serviceVehicleRequestsAPI.verifyRequest(id, {
-        status: verificationAction === 'verify' ? 'verified' : 'declined',
-        comments
-      });
-      toastSuccess(`Request ${verificationAction === 'verify' ? 'verified' : 'declined'}`);
-      setShowVerificationActionModal(false);
-      setTimeout(() => navigate('/dashboard'), 1500);
-    } catch (err) {
-      setErrors({ submit: err.message || "Failed to process verification" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-
-  const handleFileUpload = async (event) => {
-    const files = Array.from(event.target.files);
-    if (!files.length) return;
-
-    // If no id yet (new request), store files for later upload
-    if (!id) {
-      setPendingFiles((prev) => [...prev, ...files]);
-      toastSuccess(`${files.length} file(s) selected. They will be uploaded when you save the request.`);
-      event.target.value = ""; // Reset file input
-      return;
-    }
-
-    // Check permissions based on user role and request status
-    const isApprover = user?.role === "department_approver" || user?.role === "super_administrator";
-    const isRequestor = user?.role === "requestor";
-
-    if (isRequestor) {
-      // Requestors can upload attachments when status is draft or returned
-      if (!["draft", "returned"].includes(formData.status)) {
-        toastWarning("You can only upload attachments when the request is in draft or returned status");
-        event.target.value = ""; // Reset file input
-        return;
-      }
-    } else if (isApprover) {
-      // Approvers can upload attachments for submitted, returned, department_approved, or completed requests
-      if (!["submitted", "returned", "department_approved", "completed"].includes(formData.status)) {
-        toastWarning("Attachments can only be uploaded for submitted, returned, department_approved, or completed requests");
-        event.target.value = ""; // Reset file input
-        return;
+        // Default to one empty passenger field
+        data.passengers = [{ name: "" }];
       }
     } else {
-      toastWarning("You do not have permission to upload attachments");
-      event.target.value = ""; // Reset file input
-      return;
-    }
-
-    try {
-      setUploadingFiles(true);
-      const formData = new FormData();
-      files.forEach((file) => {
-        formData.append("files", file);
-      });
-
-      const response = await serviceVehicleRequestsAPI.uploadAttachments(
-        id,
-        formData
+      // Ensure all passenger objects have the name property
+      data.passengers = data.passengers.map((p) =>
+        typeof p === "string" ? { name: p } : p && p.name ? p : { name: "" }
       );
-
-      if (response.data.success) {
-        setAttachments((prev) => [...prev, ...response.data.attachments]);
-        toastSuccess("Files uploaded successfully!");
+      // If array is empty, add one empty passenger
+      if (data.passengers.length === 0) {
+        data.passengers = [{ name: "" }];
       }
-    } catch (error) {
-      console.error("Error uploading files:", error);
-      toastError(error.response?.data?.message || "Error uploading files");
-    } finally {
-      setUploadingFiles(false);
-      event.target.value = ""; // Reset file input
-    }
-  };
-
-  const handleDeleteAttachment = async (filename) => {
-    if (!id) return;
-
-    setConfirmDialogState({
-      isOpen: true,
-      title: "Delete Attachment",
-      message: "Are you sure you want to delete this attachment?",
-      variant: "danger",
-      confirmText: "Delete",
-      onConfirm: async () => {
-        setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
-        try {
-          setLoading(true);
-          await serviceVehicleRequestsAPI.deleteAttachment(id, filename);
-          setAttachments((prev) => prev.filter((att) => att.filename !== filename));
-          toastSuccess("Attachment deleted successfully!");
-        } catch (error) {
-          console.error("Error deleting attachment:", error);
-          toastError(error.response?.data?.message || "Error deleting attachment");
-        } finally {
-          setLoading(false);
-        }
-      }
-    });
-  };
-
-  const handleRemovePendingFile = (index) => {
-    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const formatFileSize = (bytes) => {
-    if (!bytes || bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
-  };
-
-  const handleSaveSection4 = async () => {
-    if (!id) {
-      toastWarning("Please save the request first before updating Section 4");
-      return;
     }
 
-    try {
-      setLoading(true);
-
-      const section4Data = {
-        assigned_driver: formData.assigned_driver || null,
-        assigned_vehicle: formData.assigned_vehicle
-          ? parseInt(formData.assigned_vehicle)
-          : null,
-        approval_date: formData.approval_date || null,
-      };
-
-      // Use the assign endpoint or update endpoint
-      await serviceVehicleRequestsAPI.assign(id, section4Data);
-
-      toastSuccess("Section 4 updated successfully!");
-
-      // Reload form data to get updated values
-      await loadFormData(id);
-    } catch (error) {
-      console.error("Error save Section 4:", error);
-      toastError(error.response?.data?.message || "Error saving Section 4");
-    } finally {
-      setLoading(false);
+    // Map requested_date to requested_by_date for Section 4 signature
+    if (data.requested_date && !data.requested_by_date) {
+      // Format the date to YYYY-MM-DD if it's a full datetime
+      const dateValue = new Date(data.requested_date);
+      if (!isNaN(dateValue.getTime())) {
+        data.requested_by_date = dateValue.toISOString().split("T")[0];
+      }
     }
-  };
 
-  const handleCancel = () => {
-    setConfirmDialogState({
-      isOpen: true,
-      title: "Cancel Changes",
-      message: "Are you sure you want to cancel? Any unsaved changes will be lost.",
-      variant: "warning",
-      confirmText: "Yes, Cancel",
-      onConfirm: () => {
-        setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
-        navigate("/dashboard");
+    // Map approval_date to date format if needed
+    if (data.approval_date) {
+      const approvalDateValue = new Date(data.approval_date);
+      if (!isNaN(approvalDateValue.getTime())) {
+        data.approval_date = approvalDateValue.toISOString().split("T")[0];
       }
-    });
-  };
+    }
 
-  const handleDelete = async () => {
-    setConfirmDialogState({
-      isOpen: true,
-      title: "Delete Draft",
-      message: "Are you sure you want to delete this draft? This action cannot be undone.",
-      variant: "danger",
-      confirmText: "Delete Forever",
-      onConfirm: async () => {
-        setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
-        try {
-          setLoading(true);
-          if (id) {
-            await serviceVehicleRequestsAPI.delete(id);
-          }
-          toastSuccess("Draft deleted successfully!");
-          navigate("/dashboard");
-        } catch (error) {
-          console.error("Error deleting draft:", error);
-          toastError(error.response?.data?.message || "Error deleting draft");
-        } finally {
-          setLoading(false);
-        }
-      }
+    // Ensure all required fields have default values
+    setFormData({
+      ...formData,
+      ...data,
+      passengers: data.passengers || [{ name: "" }],
+      requested_by_date:
+        data.requested_by_date ||
+        (data.requested_date
+          ? new Date(data.requested_date).toISOString().split("T")[0]
+          : ""),
+      assigned_driver: data.assigned_driver || "",
+      assigned_vehicle: data.assigned_vehicle || "",
+      approval_date: data.approval_date || "",
     });
-  };
 
-  const handleApprove = async () => {
-    // Validate Section 4 fields before approval ONLY if user is ODHC
-    if (isODHCUser) {
-      if (!formData.assigned_driver || !formData.assigned_driver.trim()) {
-        toastWarning(
-          "Please fill in the Assigned Driver field in Section 4 before approving."
+    // Store the requestor's department from loaded data
+    if (data.Department) {
+      setRequestorDepartment(data.Department.name);
+    } else {
+      setRequestorDepartment("");
+    }
+
+    // Load attachments
+    if (data.attachments && Array.isArray(data.attachments)) {
+      setAttachments(data.attachments);
+    } else {
+      setAttachments([]);
+    }
+
+    // If assigned_vehicle is set, find and set the vehicle details
+    // Try to find from loaded availableVehicles, if not found, it will be displayed from formData
+    if (data.assigned_vehicle) {
+      // First check if availableVehicles is already loaded
+      if (availableVehicles.length > 0) {
+        const vehicle = availableVehicles.find(
+          (v) => v.id === parseInt(data.assigned_vehicle)
         );
-        return;
+        if (vehicle) {
+          setSelectedVehicle(vehicle);
+        }
+      } else {
+        // If vehicles not yet loaded, we'll rely on the fallback logic in the render
+        setSelectedVehicle(null);
       }
+    }
+  } catch (error) {
+    console.error("Error loading form data:", error);
+    toastError("Error loading request data");
+  } finally {
+    setLoading(false);
+  }
+};
 
-      if (!formData.assigned_vehicle) {
-        toastWarning(
-          "Please fill in the Assigned Vehicle field in Section 4 before approving."
+const handleChange = (e) => {
+  const { name, value } = e.target;
+  setFormData({ ...formData, [name]: value });
+  // Clear error for this field when user starts typing
+  if (errors[name]) {
+    setErrors({ ...errors, [name]: undefined });
+  }
+
+  // If assigning a vehicle, update the selectedVehicle state
+  if (name === "assigned_vehicle" && value) {
+    const vehicle = availableVehicles.find((v) => v.id === parseInt(value));
+    setSelectedVehicle(vehicle || null);
+  } else if (name === "assigned_vehicle") {
+    setSelectedVehicle(null);
+  }
+};
+
+
+
+
+// Helper to check if a resource is available
+const isVehicleAvailable = (vehicleId) => {
+  if (loading || availabilityLoading) return true; // Assume available while loading
+  if (!vehicleId) return true;
+  if (vehicleId === parseInt(formData.assigned_vehicle)) return true;
+  return !bookedResources.vehicleIds.includes(vehicleId);
+};
+
+const isDriverAvailable = (driverName) => {
+  if (loading || availabilityLoading) return true;
+  if (!driverName) return true;
+  if (driverName === formData.assigned_driver) return true;
+  return !bookedResources.driverNames.includes(driverName);
+};
+
+const handlePassengerChange = (index, field, value) => {
+  const currentPassengers = formData.passengers || [{ name: "" }];
+  const updatedPassengers = [...currentPassengers];
+  updatedPassengers[index][field] = value;
+  setFormData({ ...formData, passengers: updatedPassengers });
+};
+
+const addPassenger = () => {
+  const currentPassengers = formData.passengers || [{ name: "" }];
+  setFormData({
+    ...formData,
+    passengers: [...currentPassengers, { name: "" }],
+  });
+};
+
+const removePassenger = (index) => {
+  const currentPassengers = formData.passengers || [{ name: "" }];
+  const updatedPassengers = currentPassengers.filter((_, i) => i !== index);
+  setFormData({ ...formData, passengers: updatedPassengers });
+};
+
+const handleJustificationSubmit = () => {
+  if (!justificationReason.trim()) {
+    toastWarning("Please provide a justification for the same-day request.");
+    return;
+  }
+  setFormData(prev => ({ ...prev, urgency_justification: justificationReason }));
+  setShowJustificationModal(false);
+  handleSubmit(justificationReason);
+};
+
+const handleSubmit = async (arg = null) => {
+  const justificationOverride = typeof arg === 'string' ? arg : null;
+
+  // Check for same-day request justification
+  const isSameDay = formData.date_prepared === formData.travel_date_from;
+  const hasJustification = justificationOverride || formData.urgency_justification;
+
+  if (isSameDay && !hasJustification) {
+    setShowJustificationModal(true);
+    return;
+  }
+
+  // Validate dates before form validation
+  const dateFields = [
+    "date_prepared",
+    "travel_date_from",
+    "travel_date_to",
+    "expiration_date",
+  ];
+  const cleanedFormData = { ...formData, status: "draft" }; // Save as draft first
+  if (justificationOverride) {
+    cleanedFormData.urgency_justification = justificationOverride;
+  }
+
+  dateFields.forEach((field) => {
+    if (cleanedFormData[field] && cleanedFormData[field].trim() === "") {
+      cleanedFormData[field] = null;
+    }
+  });
+
+  // Validate with submitted status for validation rules
+  const validationData = { ...cleanedFormData, status: "submitted" };
+  const validation = validateServiceVehicleForm(validationData);
+
+  if (!validation.isValid) {
+    setErrors(validation.errors);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+
+  try {
+    setLoading(true);
+    setErrors({});
+
+    const dataToSubmit = { ...cleanedFormData };
+
+    let requestId = id;
+
+    if (id) {
+      // Update existing request (as draft)
+      await serviceVehicleRequestsAPI.update(id, dataToSubmit);
+      requestId = id;
+    } else {
+      // Create new request (as draft)
+      const response = await serviceVehicleRequestsAPI.create(dataToSubmit);
+      // Handle different response structures - ServiceVehicleRequest uses 'id' field mapped to 'request_id' in DB
+      requestId =
+        response.data?.request?.id ||
+        response.data?.request?.request_id ||
+        response.data?.id;
+
+      if (!requestId) {
+        console.error("Response structure:", response.data);
+        throw new Error("Could not determine request ID from response");
+      }
+    }
+
+    // Upload pending files if any
+    if (pendingFiles.length > 0 && requestId) {
+      try {
+        const uploadFormData = new FormData();
+        pendingFiles.forEach((file) => {
+          uploadFormData.append("files", file);
+        });
+
+        const uploadResponse = await serviceVehicleRequestsAPI.uploadAttachments(
+          requestId,
+          uploadFormData
         );
-        return;
-      }
 
-      if (!formData.approval_date) {
-        toastWarning("Please fill in the Approval Date field in Section 4 before approving.");
-        return;
-      }
-
-      // If Section 4 fields are not saved, save them first (only for ODHC users)
-      if (id) {
-        try {
-          setLoading(true);
-          await handleSaveSection4();
-          // Wait a moment for the save to complete
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        } catch (error) {
-          console.error("Error saving Section 4:", error);
-          toastError("Error saving Section 4. Please try again.");
-          setLoading(false);
-          return;
+        if (uploadResponse.data.success) {
+          setAttachments((prev) => [...prev, ...uploadResponse.data.attachments]);
+          setPendingFiles([]); // Clear pending files after upload
         }
+      } catch (uploadError) {
+        console.error("Error uploading pending files:", uploadError);
+        // Continue with submission even if file upload fails
       }
     }
-    try {
-      setActionModalState({
-        isOpen: true,
-        title: "Approve Request",
-        message: "Please provide approval remarks (optional):",
-        inputLabel: "Remarks",
-        inputType: "textarea",
-        confirmText: "Approve",
-        variant: "success",
-        allowEmpty: true,
-        onConfirm: async (approvalReason) => {
-          setActionModalState(prev => ({ ...prev, isOpen: false }));
-          setLoading(true);
 
-          // Ensure assigned_vehicle is sent as a number or null
-          const approvalData = {
-            remarks: approvalReason || "",
-            assigned_vehicle: formData.assigned_vehicle
-              ? parseInt(formData.assigned_vehicle)
-              : null,
-          };
+    // Now submit the request (this will trigger email notifications)
+    if (requestId) {
+      await serviceVehicleRequestsAPI.submit(requestId);
+      toastSuccess("Service Vehicle Request submitted successfully!");
+    } else {
+      throw new Error("Failed to get request ID after creation");
+    }
 
-          try {
-            if (id) await serviceVehicleRequestsAPI.update(id, approvalData);
+    setTimeout(() => {
+      navigate("/dashboard");
+    }, 2000);
+  } catch (error) {
+    console.error("Error submitting form:", error);
 
-            // Call approve endpoint
-            await serviceVehicleRequestsAPI.approve(id, { remarks: approvalReason || "" });
+    "Error submitting request. Please try again.";
 
-            toastSuccess("Request approved and completed successfully!");
-            setTimeout(() => {
-              navigate("/dashboard");
-            }, 2000);
-          } catch (error) {
-            console.error("Error approving request:", error);
-            toastError(error.response?.data?.message || "Error approving request");
-          } finally {
-            setLoading(false);
-          }
+    toastError(errorMessage);
+    setErrors({ submit: errorMessage });
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleSaveDraft = async () => {
+  try {
+    setLoading(true);
+
+    const dataToSave = { ...formData, status: "draft" };
+
+    let requestId = id;
+
+    if (id) {
+      // Update existing draft
+      await serviceVehicleRequestsAPI.update(id, dataToSave);
+      requestId = id;
+      toastSuccess("Draft updated successfully!");
+    } else {
+      // Create new draft
+      const response = await serviceVehicleRequestsAPI.create(dataToSave);
+      requestId =
+        response.data?.request?.id ||
+        response.data?.request?.request_id ||
+        response.data?.id;
+      toastSuccess("Form saved as draft successfully!");
+    }
+
+    // Upload pending files if any
+    if (pendingFiles.length > 0 && requestId) {
+      try {
+        const uploadFormData = new FormData();
+        pendingFiles.forEach((file) => {
+          uploadFormData.append("files", file);
+        });
+
+        const uploadResponse = await serviceVehicleRequestsAPI.uploadAttachments(
+          requestId,
+          uploadFormData
+        );
+
+        if (uploadResponse.data.success) {
+          setAttachments((prev) => [...prev, ...uploadResponse.data.attachments]);
+          setPendingFiles([]); // Clear pending files after upload
         }
-      });
-    } catch (error) {
-      console.error("Error showing approve modal:", error);
-    }
-  };
-
-  const handleReturn = async () => {
-    // Default option
-    const options = [{ label: "Return to Requestor", value: "requestor" }];
-
-    // Logic to add 'Return to Previous Step' if applicable
-    // For now, hardcode logic based on status or known workflow
-    if (formData.status === 'department_approved') {
-      // If we were at a later stage, we could return to department approval
-      options.push({ label: "Return to Department Approver", value: "step_1" });
+      } catch (uploadError) {
+        console.error("Error uploading pending files:", uploadError);
+        // Continue even if file upload fails
+      }
     }
 
-    setReturnOptions(options);
-    setShowReturnModal(true);
-  };
-
-  const onReturnConfirm = async (returnReason, returnTo) => {
-    setShowReturnModal(false);
-    try {
-      setLoading(true);
-      await serviceVehicleRequestsAPI.return(id, {
-        reason: returnReason,
-        // Phase 2: returnTo: returnTo 
-      });
-      toastSuccess("Request returned successfully!");
+    // If this was a new request, navigate to the edit page
+    if (!id && requestId) {
+      setTimeout(() => {
+        navigate(`/service-vehicle-requests/${requestId}`);
+      }, 1500);
+    } else {
       setTimeout(() => {
         navigate("/dashboard");
       }, 1500);
-    } catch (error) {
-      console.error("Error returning request:", error);
-      toastError(error.response?.data?.message || "Error returning request");
-    } finally {
-      setLoading(false);
     }
-  };
+  } catch (error) {
+    console.error("Error saving draft:", error);
+    setErrors({ submit: "Error saving draft. Please try again." });
+  } finally {
+    setLoading(false);
+  }
+};
 
-  const handleDecline = async () => {
+const handleAssignVerifierClick = () => setShowVerifierModal(true);
+
+const handleAssignVerifier = async (verifierId) => {
+  try {
+    setLoading(true);
+    await serviceVehicleRequestsAPI.assignVerifier(id, { verifier_id: verifierId });
+    toastSuccess('Verifier assigned successfully');
+    setShowVerifierModal(false);
+    setTimeout(() => navigate('/dashboard'), 1500);
+  } catch (err) {
+    setErrors({ submit: err.message || "Failed to assign verifier" });
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleVerifyClick = (action) => {
+  setVerificationAction(action);
+  setShowVerificationActionModal(true);
+};
+
+const handleVerificationConfirm = async (comments) => {
+  try {
+    setLoading(true);
+    await serviceVehicleRequestsAPI.verifyRequest(id, {
+      status: verificationAction === 'verify' ? 'verified' : 'declined',
+      comments
+    });
+    toastSuccess(`Request ${verificationAction === 'verify' ? 'verified' : 'declined'}`);
+    setShowVerificationActionModal(false);
+    setTimeout(() => navigate('/dashboard'), 1500);
+  } catch (err) {
+    setErrors({ submit: err.message || "Failed to process verification" });
+  } finally {
+    setLoading(false);
+  }
+};
+
+
+const handleFileUpload = async (event) => {
+  const files = Array.from(event.target.files);
+  if (!files.length) return;
+
+  // If no id yet (new request), store files for later upload
+  if (!id) {
+    setPendingFiles((prev) => [...prev, ...files]);
+    toastSuccess(`${files.length} file(s) selected. They will be uploaded when you save the request.`);
+    event.target.value = ""; // Reset file input
+    return;
+  }
+
+  // Check permissions based on user role and request status
+  const isApprover = user?.role === "department_approver" || user?.role === "super_administrator";
+  const isRequestor = user?.role === "requestor";
+
+  if (isRequestor) {
+    // Requestors can upload attachments when status is draft or returned
+    if (!["draft", "returned"].includes(formData.status)) {
+      toastWarning("You can only upload attachments when the request is in draft or returned status");
+      event.target.value = ""; // Reset file input
+      return;
+    }
+  } else if (isApprover) {
+    // Approvers can upload attachments for submitted, returned, department_approved, or completed requests
+    if (!["submitted", "returned", "department_approved", "completed"].includes(formData.status)) {
+      toastWarning("Attachments can only be uploaded for submitted, returned, department_approved, or completed requests");
+      event.target.value = ""; // Reset file input
+      return;
+    }
+  } else {
+    toastWarning("You do not have permission to upload attachments");
+    event.target.value = ""; // Reset file input
+    return;
+  }
+
+  try {
+    setUploadingFiles(true);
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    const response = await serviceVehicleRequestsAPI.uploadAttachments(
+      id,
+      formData
+    );
+
+    if (response.data.success) {
+      setAttachments((prev) => [...prev, ...response.data.attachments]);
+      toastSuccess("Files uploaded successfully!");
+    }
+  } catch (error) {
+    console.error("Error uploading files:", error);
+    toastError(error.response?.data?.message || "Error uploading files");
+  } finally {
+    setUploadingFiles(false);
+    event.target.value = ""; // Reset file input
+  }
+};
+
+const handleDeleteAttachment = async (filename) => {
+  if (!id) return;
+
+  setConfirmDialogState({
+    isOpen: true,
+    title: "Delete Attachment",
+    message: "Are you sure you want to delete this attachment?",
+    variant: "danger",
+    confirmText: "Delete",
+    onConfirm: async () => {
+      setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
+      try {
+        setLoading(true);
+        await serviceVehicleRequestsAPI.deleteAttachment(id, filename);
+        setAttachments((prev) => prev.filter((att) => att.filename !== filename));
+        toastSuccess("Attachment deleted successfully!");
+      } catch (error) {
+        console.error("Error deleting attachment:", error);
+        toastError(error.response?.data?.message || "Error deleting attachment");
+      } finally {
+        setLoading(false);
+      }
+    }
+  });
+};
+
+const handleRemovePendingFile = (index) => {
+  setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+};
+
+const formatFileSize = (bytes) => {
+  if (!bytes || bytes === 0) return "0 Bytes";
+  const k = 1024;
+  const sizes = ["Bytes", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+};
+
+const handleSaveSection4 = async () => {
+  if (!id) {
+    toastWarning("Please save the request first before updating Section 4");
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    const section4Data = {
+      assigned_driver: formData.assigned_driver || null,
+      assigned_vehicle: formData.assigned_vehicle
+        ? parseInt(formData.assigned_vehicle)
+        : null,
+      approval_date: formData.approval_date || null,
+    };
+
+    // Use the assign endpoint or update endpoint
+    await serviceVehicleRequestsAPI.assign(id, section4Data);
+
+    toastSuccess("Section 4 updated successfully!");
+
+    // Reload form data to get updated values
+    await loadFormData(id);
+  } catch (error) {
+    console.error("Error save Section 4:", error);
+    toastError(error.response?.data?.message || "Error saving Section 4");
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleCancel = () => {
+  setConfirmDialogState({
+    isOpen: true,
+    title: "Cancel Changes",
+    message: "Are you sure you want to cancel? Any unsaved changes will be lost.",
+    variant: "warning",
+    confirmText: "Yes, Cancel",
+    onConfirm: () => {
+      setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
+      navigate("/dashboard");
+    }
+  });
+};
+
+const handleDelete = async () => {
+  setConfirmDialogState({
+    isOpen: true,
+    title: "Delete Draft",
+    message: "Are you sure you want to delete this draft? This action cannot be undone.",
+    variant: "danger",
+    confirmText: "Delete Forever",
+    onConfirm: async () => {
+      setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
+      try {
+        setLoading(true);
+        if (id) {
+          await serviceVehicleRequestsAPI.delete(id);
+        }
+        toastSuccess("Draft deleted successfully!");
+        navigate("/dashboard");
+      } catch (error) {
+        console.error("Error deleting draft:", error);
+        toastError(error.response?.data?.message || "Error deleting draft");
+      } finally {
+        setLoading(false);
+      }
+    }
+  });
+};
+
+const handleApprove = async () => {
+  // Validate Section 4 fields before approval ONLY if user is ODHC
+  if (isODHCUser) {
+    if (!formData.assigned_driver || !formData.assigned_driver.trim()) {
+      toastWarning(
+        "Please fill in the Assigned Driver field in Section 4 before approving."
+      );
+      return;
+    }
+
+    if (!formData.assigned_vehicle) {
+      toastWarning(
+        "Please fill in the Assigned Vehicle field in Section 4 before approving."
+      );
+      return;
+    }
+
+    if (!formData.approval_date) {
+      toastWarning("Please fill in the Approval Date field in Section 4 before approving.");
+      return;
+    }
+
+    // If Section 4 fields are not saved, save them first (only for ODHC users)
+    if (id) {
+      try {
+        setLoading(true);
+        await handleSaveSection4();
+        // Wait a moment for the save to complete
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error("Error saving Section 4:", error);
+        toastError("Error saving Section 4. Please try again.");
+        setLoading(false);
+        return;
+      }
+    }
+  }
+  try {
     setActionModalState({
       isOpen: true,
-      title: "Decline Request",
-      message: "Please provide reason for declining:",
-      inputLabel: "Reason",
+      title: "Approve Request",
+      message: "Please provide approval remarks (optional):",
+      inputLabel: "Remarks",
       inputType: "textarea",
-      confirmText: "Decline Request",
-      variant: "danger",
-      onConfirm: async (declineReason) => {
-        if (!declineReason) {
-          toastWarning("Reason is required to decline request.");
-          return;
-        }
+      confirmText: "Approve",
+      variant: "success",
+      allowEmpty: true,
+      onConfirm: async (approvalReason) => {
         setActionModalState(prev => ({ ...prev, isOpen: false }));
+        setLoading(true);
+
+        // Ensure assigned_vehicle is sent as a number or null
+        const approvalData = {
+          remarks: approvalReason || "",
+          assigned_vehicle: formData.assigned_vehicle
+            ? parseInt(formData.assigned_vehicle)
+            : null,
+        };
+
         try {
-          setLoading(true);
-          await serviceVehicleRequestsAPI.decline(id, {
-            reason: declineReason,
-          });
-          toastSuccess("Request declined successfully!");
+          if (id) await serviceVehicleRequestsAPI.update(id, approvalData);
+
+          // Call approve endpoint
+          await serviceVehicleRequestsAPI.approve(id, { remarks: approvalReason || "" });
+
+          toastSuccess("Request approved and completed successfully!");
           setTimeout(() => {
             navigate("/dashboard");
-          }, 1500);
+          }, 2000);
         } catch (error) {
-          console.error("Error declining request:", error);
-          toastError(error.response?.data?.message || "Error declining request");
+          console.error("Error approving request:", error);
+          toastError(error.response?.data?.message || "Error approving request");
         } finally {
           setLoading(false);
         }
       }
     });
-  };
+  } catch (error) {
+    console.error("Error showing approve modal:", error);
+  }
+};
 
-  // getConditionalConfig and renderConditionalSection moved to TripDetails component
+const handleReturn = async () => {
+  // Default option
+  const options = [{ label: "Return to Requestor", value: "requestor" }];
 
-  const isCreating = !id;
+  // Logic to add 'Return to Previous Step' if applicable
+  // For now, hardcode logic based on status or known workflow
+  if (formData.status === 'department_approved') {
+    // If we were at a later stage, we could return to department approval
+    options.push({ label: "Return to Department Approver", value: "step_1" });
+  }
 
-  // Check if request is submitted/completed (should be read-only)
-  // Returned requests can be edited by the requestor even when viewing
-  const isReturnedAndCanEdit =
-    isViewing &&
-    formData.status === "returned" &&
-    user?.id === formData.requested_by;
-  const isReadOnly =
-    isViewing &&
-    formData.status &&
-    !["draft", "returned"].includes(formData.status) &&
-    !isReturnedAndCanEdit;
+  setReturnOptions(options);
+  setShowReturnModal(true);
+};
 
-  const getInputProps = (baseProps = {}) => {
-    // Allow editing if: creating, editing, or viewing returned request as requestor
-    const canEdit = isCreating || isEditing || isReturnedAndCanEdit;
+const onReturnConfirm = async (returnReason, returnTo) => {
+  setShowReturnModal(false);
+  try {
+    setLoading(true);
+    await serviceVehicleRequestsAPI.return(id, {
+      reason: returnReason,
+      // Phase 2: returnTo: returnTo 
+    });
+    toastSuccess("Request returned successfully!");
+    setTimeout(() => {
+      navigate("/dashboard");
+    }, 1500);
+  } catch (error) {
+    console.error("Error returning request:", error);
+    toastError(error.response?.data?.message || "Error returning request");
+  } finally {
+    setLoading(false);
+  }
+};
 
-    if (!canEdit && (isViewing || isReadOnly)) {
-      return {
-        ...baseProps,
-        disabled: true,
-        readOnly: true,
-        className: `${baseProps.className || ""
-          } bg-gray-50 cursor-not-allowed`.trim(),
-      };
+const handleDecline = async () => {
+  setActionModalState({
+    isOpen: true,
+    title: "Decline Request",
+    message: "Please provide reason for declining:",
+    inputLabel: "Reason",
+    inputType: "textarea",
+    confirmText: "Decline Request",
+    variant: "danger",
+    onConfirm: async (declineReason) => {
+      if (!declineReason) {
+        toastWarning("Reason is required to decline request.");
+        return;
+      }
+      setActionModalState(prev => ({ ...prev, isOpen: false }));
+      try {
+        setLoading(true);
+        await serviceVehicleRequestsAPI.decline(id, {
+          reason: declineReason,
+        });
+        toastSuccess("Request declined successfully!");
+        setTimeout(() => {
+          navigate("/dashboard");
+        }, 1500);
+      } catch (error) {
+        console.error("Error declining request:", error);
+        toastError(error.response?.data?.message || "Error declining request");
+      } finally {
+        setLoading(false);
+      }
     }
-    return baseProps;
-  };
+  });
+};
 
-  const renderFieldError = (fieldName) => {
-    if (errors[fieldName]) {
-      return <p className="text-red-500 text-xs mt-1">{errors[fieldName]}</p>;
-    }
+// getConditionalConfig and renderConditionalSection moved to TripDetails component
+
+const isCreating = !id;
+
+// Check if request is submitted/completed (should be read-only)
+// Returned requests can be edited by the requestor even when viewing
+const isReturnedAndCanEdit =
+  isViewing &&
+  formData.status === "returned" &&
+  user?.id === formData.requested_by;
+const isReadOnly =
+  isViewing &&
+  formData.status &&
+  !["draft", "returned"].includes(formData.status) &&
+  !isReturnedAndCanEdit;
+
+const getInputProps = (baseProps = {}) => {
+  // Allow editing if: creating, editing, or viewing returned request as requestor
+  const canEdit = isCreating || isEditing || isReturnedAndCanEdit;
+
+  if (!canEdit && (isViewing || isReadOnly)) {
+    return {
+      ...baseProps,
+      disabled: true,
+      readOnly: true,
+      className: `${baseProps.className || ""
+        } bg-gray-50 cursor-not-allowed`.trim(),
+    };
+  }
+  return baseProps;
+};
+
+const renderFieldError = (fieldName) => {
+  if (errors[fieldName]) {
+    return <p className="text-red-500 text-xs mt-1">{errors[fieldName]}</p>;
+  }
+  return null;
+};
+
+const getRecommendedVehicles = () => {
+  // Count passengers for passenger-related requests
+  const passengerCount = (formData.passengers || []).filter(
+    (p) => p.name && p.name.trim()
+  ).length;
+
+  if (passengerCount === 0) {
+    return availableVehicles; // Return all vehicles if no passengers
+  }
+
+  // Recommend vehicles with seaters >= passenger count + 1 (for driver)
+  return availableVehicles.filter(
+    (vehicle) => vehicle.seaters >= passengerCount + 1
+  );
+};
+
+const isVehicleRecommended = (vehicleId) => {
+  const passengerCount = (formData.passengers || []).filter(
+    (p) => p.name && p.name.trim()
+  ).length;
+
+  if (passengerCount === 0) {
+    return false;
+  }
+
+  return getRecommendedVehicles().some((v) => v.id === vehicleId);
+};
+
+const getAvailableVehiclesMessage = () => {
+  const passengerCount = (formData.passengers || []).filter(
+    (p) => p.name && p.name.trim()
+  ).length;
+
+  if (passengerCount === 0) {
     return null;
-  };
+  }
 
-  const getRecommendedVehicles = () => {
-    // Count passengers for passenger-related requests
-    const passengerCount = (formData.passengers || []).filter(
-      (p) => p.name && p.name.trim()
-    ).length;
+  const recommendedVehicles = getRecommendedVehicles();
+  const requiredSeaters = passengerCount + 1;
 
-    if (passengerCount === 0) {
-      return availableVehicles; // Return all vehicles if no passengers
-    }
-
-    // Recommend vehicles with seaters >= passenger count + 1 (for driver)
-    return availableVehicles.filter(
-      (vehicle) => vehicle.seaters >= passengerCount + 1
-    );
-  };
-
-  const isVehicleRecommended = (vehicleId) => {
-    const passengerCount = (formData.passengers || []).filter(
-      (p) => p.name && p.name.trim()
-    ).length;
-
-    if (passengerCount === 0) {
-      return false;
-    }
-
-    return getRecommendedVehicles().some((v) => v.id === vehicleId);
-  };
-
-  const getAvailableVehiclesMessage = () => {
-    const passengerCount = (formData.passengers || []).filter(
-      (p) => p.name && p.name.trim()
-    ).length;
-
-    if (passengerCount === 0) {
-      return null;
-    }
-
-    const recommendedVehicles = getRecommendedVehicles();
-    const requiredSeaters = passengerCount + 1;
-
-    if (recommendedVehicles.length === 0) {
-      return (
-        <p className="text-xs text-red-600 mt-2">
-          No vehicle available with {requiredSeaters}+ seaters for{" "}
-          {passengerCount} passenger{passengerCount > 1 ? "s" : ""} + driver
-        </p>
-      );
-    }
-
-    return null;
-  };
-
-  if (loading && !id) {
+  if (recommendedVehicles.length === 0) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
-      </div>
+      <p className="text-xs text-red-600 mt-2">
+        No vehicle available with {requiredSeaters}+ seaters for{" "}
+        {passengerCount} passenger{passengerCount > 1 ? "s" : ""} + driver
+      </p>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 py-8 transition-colors duration-200">
-      {/* Back Button */}
-      <div className="max-w-4xl mx-auto mb-4 px-4 no-print">
-        <button
-          onClick={() => navigate("/dashboard")}
-          className="flex items-center text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
-        >
-          <ArrowLeft className="h-5 w-5 mr-1" />
-          Back to Dashboard
-        </button>
-      </div>
+  return null;
+};
 
-      {/* PDF-like Form Container */}
-      <div
-        className="max-w-4xl mx-auto bg-white shadow-2xl print:shadow-none transition-colors duration-200"
-        style={{ boxShadow: "0 0 30px rgba(0,0,0,0.15)", colorScheme: "light" }}
+if (loading && !id) {
+  return (
+    <div className="flex justify-center items-center min-h-screen">
+      <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+    </div>
+  );
+}
+
+return (
+  <div className="min-h-screen bg-gray-100 dark:bg-gray-900 py-8 transition-colors duration-200">
+    {/* Back Button */}
+    <div className="max-w-4xl mx-auto mb-4 px-4 no-print">
+      <button
+        onClick={() => navigate("/dashboard")}
+        className="flex items-center text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
       >
-        <div className="p-8 md:p-12" style={{ minHeight: "11in" }}>
-          {/* Header Section */}
-          <div className="border-b-2 border-gray-800 pb-4 mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-3">
-                <img src={STC_LOGO} alt="STC Logo" className="h-16 w-auto" />
-                <div>
-                  <div className="text-xl font-bold text-gray-900">
-                    STYROTECH CORPORATION
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Packaging Solutions
-                  </div>
+        <ArrowLeft className="h-5 w-5 mr-1" />
+        Back to Dashboard
+      </button>
+    </div>
+
+    {/* PDF-like Form Container */}
+    <div
+      className="max-w-4xl mx-auto bg-white shadow-2xl print:shadow-none transition-colors duration-200"
+      style={{ boxShadow: "0 0 30px rgba(0,0,0,0.15)", colorScheme: "light" }}
+    >
+      <div className="p-8 md:p-12" style={{ minHeight: "11in" }}>
+        {/* Header Section */}
+        <div className="border-b-2 border-gray-800 pb-4 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-3">
+              <img src={STC_LOGO} alt="STC Logo" className="h-16 w-auto" />
+              <div>
+                <div className="text-xl font-bold text-gray-900">
+                  STYROTECH CORPORATION
                 </div>
-              </div>
-              <div className="text-right">
-                <div className="text-xs text-gray-500">Form No.</div>
-                <div className="text-sm font-semibold text-gray-700">
-                  HRD-FM-035 rev.04
+                <div className="text-sm text-gray-600">
+                  Packaging Solutions
                 </div>
               </div>
             </div>
-            <div className="text-center">
-              <h1 className="text-2xl font-bold text-gray-900 uppercase tracking-wide">
-                Service Vehicle Request Form
-              </h1>
-              {(isViewing || isEditing) && id && (
-                <div className="text-sm text-gray-600 mt-2">
-                  Reference Code:{" "}
-                  <span className="font-semibold">
-                    {formData.reference_code || `SVR-${id}`}
-                  </span>
+            <div className="text-right">
+              <div className="text-xs text-gray-500">Form No.</div>
+              <div className="text-sm font-semibold text-gray-700">
+                HRD-FM-035 rev.04
+              </div>
+            </div>
+          </div>
+          <div className="text-center">
+            <h1 className="text-2xl font-bold text-gray-900 uppercase tracking-wide">
+              Service Vehicle Request Form
+            </h1>
+            {(isViewing || isEditing) && id && (
+              <div className="text-sm text-gray-600 mt-2">
+                Reference Code:{" "}
+                <span className="font-semibold">
+                  {formData.reference_code || `SVR-${id}`}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Success Message */}
+        {successMessage && (
+          <div className="mb-6 p-4 bg-green-50 border-2 border-green-400">
+            <p className="text-green-700 text-sm font-semibold">
+              {successMessage}
+            </p>
+          </div>
+        )}
+
+        {/* Pending Verification Banner */}
+        {formData.verification_status === 'pending' && (
+          <div className="mb-6 p-4 bg-purple-50 border-2 border-purple-500 rounded-md no-print">
+            <div className="flex items-center">
+              <div className="p-2">
+                <UserCheck className="h-6 w-6 text-purple-500" />
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-purple-800">Pending Verification</h3>
+                {formData.Verifier && (
+                  <div className="text-sm text-purple-700">
+                    Assigned to: {formData.Verifier.first_name} {formData.Verifier.last_name}
+                  </div>
+                )}
+                <div className="text-sm text-purple-700 italic mt-1">
+                  This request is waiting for verification review.
                 </div>
-              )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Verification Status Banner */}
+        {formData.verification_status === 'verified' && (
+          <div className="mb-6 p-4 bg-green-50 border-2 border-green-500 rounded-md no-print">
+            <div className="flex items-center">
+              <div className="p-2">
+                <CheckCircle className="h-6 w-6 text-green-500" />
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-green-800">Verified</h3>
+                {formData.Verifier && (
+                  <div className="text-sm text-green-700">
+                    Verified by: {formData.Verifier.first_name} {formData.Verifier.last_name}
+                  </div>
+                )}
+                {formData.verified_at && (
+                  <div className="text-sm text-green-700">
+                    Date: {new Date(formData.verified_at).toLocaleString()}
+                  </div>
+                )}
+                {formData.verifier_comments && (
+                  <div className="mt-1 text-sm text-green-700 italic border-l-2 border-green-300 pl-2">
+                    "{formData.verifier_comments}"
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {formData.verification_status === 'declined' && (
+          <div className="mb-6 p-4 bg-red-50 border-2 border-red-500 rounded-md no-print">
+            <div className="flex items-center">
+              <div className="p-2">
+                <XCircle className="h-6 w-6 text-red-500" />
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-red-800">Verification Declined</h3>
+                {formData.Verifier && (
+                  <div className="text-sm text-red-700">
+                    Declined by: {formData.Verifier.first_name} {formData.Verifier.last_name}
+                  </div>
+                )}
+                {formData.verifier_comments && (
+                  <div className="mt-1 text-sm text-red-700 italic border-l-2 border-red-300 pl-2">
+                    Reason: "{formData.verifier_comments}"
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Error Display */}
+        {errors.submit && (
+          <div className="bg-red-50 border-2 border-red-400 p-4 mb-4">
+            <p className="text-red-600 text-sm">{errors.submit}</p>
+          </div>
+        )}
+
+        {/* Form */}
+        <form className="space-y-6">
+          {/* Section 1: Requestor Information */}
+          <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
+            <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
+              <h2 className="text-sm font-bold text-gray-900 uppercase">
+                Section 1: Requestor Information
+              </h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Name of Requestor <span className="text-red-600">*</span>
+                </label>
+                <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
+                  <input
+                    type="text"
+                    value={formData.requestor_name}
+                    disabled
+                    className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Date Prepared <span className="text-red-600">*</span>
+                </label>
+                <div
+                  className={`border-b-2 pb-1 print:border-b-0 ${errors.date_prepared
+                    ? "border-red-500"
+                    : "border-gray-400"
+                    }`}
+                >
+                  <input
+                    type="date"
+                    name="date_prepared"
+                    value={formData.date_prepared}
+                    {...getInputProps({
+                      onChange: handleChange,
+                      className:
+                        "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
+                      disabled: loading,
+                    })}
+                  />
+                </div>
+                {errors.date_prepared && (
+                  <p className="text-red-500 text-xs mt-1">
+                    {errors.date_prepared}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Department <span className="text-red-600">*</span>
+                </label>
+                <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
+                  <input
+                    type="text"
+                    value={
+                      requestorDepartment ||
+                      (() => {
+                        const userData = localStorage.getItem("user");
+                        if (userData && !id) {
+                          try {
+                            const parsedUser = JSON.parse(userData);
+                            return parsedUser.department?.name || "";
+                          } catch (error) {
+                            return "";
+                          }
+                        }
+                        return "";
+                      })()
+                    }
+                    disabled
+                    className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Contact Number <span className="text-red-600">*</span>
+                </label>
+                <div
+                  className={`border-b-2 pb-1 print:border-b-0 ${errors.contact_number
+                    ? "border-red-500"
+                    : "border-gray-400"
+                    }`}
+                >
+                  <input
+                    type="tel"
+                    name="contact_number"
+                    value={formData.contact_number}
+                    placeholder="e.g., 09171234567"
+                    {...getInputProps({
+                      onChange: (e) => {
+                        const value = e.target.value.replace(/[^0-9]/g, "");
+                        handleChange({
+                          target: { name: "contact_number", value },
+                        });
+                      },
+                      className:
+                        "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
+                      disabled: loading,
+                    })}
+                  />
+                </div>
+                {errors.contact_number && (
+                  <p className="text-red-500 text-xs mt-1">
+                    {errors.contact_number}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Success Message */}
-          {successMessage && (
-            <div className="mb-6 p-4 bg-green-50 border-2 border-green-400">
-              <p className="text-green-700 text-sm font-semibold">
-                {successMessage}
-              </p>
+          {/* Section 2: Request Details */}
+          <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
+            <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
+              <h2 className="text-sm font-bold text-gray-900 uppercase">
+                Section 2: Request Specific Details
+              </h2>
             </div>
-          )}
 
-          {/* Pending Verification Banner */}
-          {formData.verification_status === 'pending' && (
-            <div className="mb-6 p-4 bg-purple-50 border-2 border-purple-500 rounded-md no-print">
-              <div className="flex items-center">
-                <div className="p-2">
-                  <UserCheck className="h-6 w-6 text-purple-500" />
-                </div>
-                <div className="ml-3">
-                  <h3 className="text-sm font-medium text-purple-800">Pending Verification</h3>
-                  {formData.Verifier && (
-                    <div className="text-sm text-purple-700">
-                      Assigned to: {formData.Verifier.first_name} {formData.Verifier.last_name}
-                    </div>
-                  )}
-                  <div className="text-sm text-purple-700 italic mt-1">
-                    This request is waiting for verification review.
-                  </div>
-                </div>
+            {/* Urgency Justification Display */}
+            {formData.urgency_justification && (
+              <div className="mb-3 md:mb-4 flex flex-col">
+                <label className="text-xs font-semibold block mb-1 text-red-600">
+                  Justification for Same-Day Request
+                </label>
+                <textarea
+                  value={formData.urgency_justification}
+                  readOnly
+                  className="w-full border border-red-300 bg-red-50 px-2 py-1 text-xs focus:outline-none"
+                  rows="2"
+                ></textarea>
+              </div>
+            )}
+
+            {/* Purpose */}
+            <div className="mb-3 md:mb-4 flex flex-col">
+              <label className="text-xs font-semibold block mb-1 text-gray-700">
+                Purpose of Request <span className="text-red-600">*</span>
+              </label>
+              <textarea
+                name="purpose"
+                value={formData.purpose}
+                {...getInputProps({
+                  onChange: handleChange,
+                  className:
+                    "w-full border border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
+                  disabled: loading || isReadOnly,
+                  rows: "2",
+                })}
+              ></textarea>
+              {renderFieldError("purpose")}
+            </div>
+
+            {/* Request Type */}
+            <div className="mb-3 md:mb-4 flex flex-col">
+              <label className="text-xs font-semibold block mb-1 text-gray-700">
+                Type of Request <span className="text-red-600">*</span>
+              </label>
+              <select
+                name="request_type"
+                value={formData.request_type}
+                {...getInputProps({
+                  onChange: handleChange,
+                  className:
+                    "w-full border border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
+                  disabled: loading || isReadOnly,
+                })}
+              >
+                <option value="" disabled>
+                  Select Request Type
+                </option>
+                {REQUEST_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {renderFieldError("request_type")}
+            </div>
+
+            {/* Travel Dates */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 md:gap-x-8 md:gap-y-2 mb-3 md:mb-4">
+              <div className="flex flex-col">
+                <label className="text-xs font-semibold mb-1 text-gray-700">
+                  Travel Date From <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="date"
+                  name="travel_date_from"
+                  value={formData.travel_date_from}
+                  {...getInputProps({
+                    onChange: handleChange,
+                    className:
+                      "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
+                    disabled: loading || isReadOnly,
+                  })}
+                />
+                {renderFieldError("travel_date_from")}
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs font-semibold mb-1 text-gray-700">
+                  Travel Date To <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="date"
+                  name="travel_date_to"
+                  value={formData.travel_date_to}
+                  {...getInputProps({
+                    onChange: handleChange,
+                    className:
+                      "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
+                    disabled: loading || isReadOnly,
+                  })}
+                />
+                {renderFieldError("travel_date_to")}
               </div>
             </div>
-          )}
 
-          {/* Verification Status Banner */}
-          {formData.verification_status === 'verified' && (
-            <div className="mb-6 p-4 bg-green-50 border-2 border-green-500 rounded-md no-print">
-              <div className="flex items-center">
-                <div className="p-2">
-                  <CheckCircle className="h-6 w-6 text-green-500" />
-                </div>
-                <div className="ml-3">
-                  <h3 className="text-sm font-medium text-green-800">Verified</h3>
-                  {formData.Verifier && (
-                    <div className="text-sm text-green-700">
-                      Verified by: {formData.Verifier.first_name} {formData.Verifier.last_name}
-                    </div>
-                  )}
-                  {formData.verified_at && (
-                    <div className="text-sm text-green-700">
-                      Date: {new Date(formData.verified_at).toLocaleString()}
-                    </div>
-                  )}
-                  {formData.verifier_comments && (
-                    <div className="mt-1 text-sm text-green-700 italic border-l-2 border-green-300 pl-2">
-                      "{formData.verifier_comments}"
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
+            {/* Dynamic Conditional Section */}
+            {formData.request_type && (
+              <TripDetails
+                formData={formData}
+                errors={errors}
+                loading={loading}
+                isViewing={isViewing}
+                getInputProps={getInputProps}
+                handleChange={handleChange}
+                passengerActions={{
+                  add: addPassenger,
+                  remove: removePassenger,
+                  change: (index, field, value) => handlePassengerChange(index, field, value)
+                }}
+              />
+            )}
+          </div>
 
-          {formData.verification_status === 'declined' && (
-            <div className="mb-6 p-4 bg-red-50 border-2 border-red-500 rounded-md no-print">
-              <div className="flex items-center">
-                <div className="p-2">
-                  <XCircle className="h-6 w-6 text-red-500" />
-                </div>
-                <div className="ml-3">
-                  <h3 className="text-sm font-medium text-red-800">Verification Declined</h3>
-                  {formData.Verifier && (
-                    <div className="text-sm text-red-700">
-                      Declined by: {formData.Verifier.first_name} {formData.Verifier.last_name}
-                    </div>
-                  )}
-                  {formData.verifier_comments && (
-                    <div className="mt-1 text-sm text-red-700 italic border-l-2 border-red-300 pl-2">
-                      Reason: "{formData.verifier_comments}"
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Error Display */}
-          {errors.submit && (
-            <div className="bg-red-50 border-2 border-red-400 p-4 mb-4">
-              <p className="text-red-600 text-sm">{errors.submit}</p>
-            </div>
-          )}
-
-          {/* Form */}
-          <form className="space-y-6">
-            {/* Section 1: Requestor Information */}
+          {/* Section 3: Driver's License Information - Only for car_only request type */}
+          {formData.request_type === "car_only" && (
             <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
               <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
                 <h2 className="text-sm font-bold text-gray-900 uppercase">
-                  Section 1: Requestor Information
+                  Section 3: Driver's License Information
                 </h2>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Name of Requestor <span className="text-red-600">*</span>
+                    Do you have a valid Driver's License? <span className="text-red-600">*</span>
                   </label>
                   <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                    <input
-                      type="text"
-                      value={formData.requestor_name}
-                      disabled
-                      className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900"
-                    />
+                    <select
+                      name="has_valid_license"
+                      value={formData.has_valid_license}
+                      {...getInputProps({
+                        onChange: handleChange,
+                        className:
+                          "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900",
+                        disabled: loading,
+                      })}
+                    >
+                      <option value="" disabled>
+                        Select
+                      </option>
+                      <option value="true">Yes</option>
+                      <option value="false">No</option>
+                    </select>
                   </div>
+                  {errors.has_valid_license && (
+                    <p className="text-red-500 text-xs mt-1">
+                      {errors.has_valid_license}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Date Prepared <span className="text-red-600">*</span>
+                    License Number <span className="text-red-600">*</span>
                   </label>
                   <div
-                    className={`border-b-2 pb-1 print:border-b-0 ${errors.date_prepared
+                    className={`border-b-2 pb-1 print:border-b-0 ${errors.license_number
+                      ? "border-red-500"
+                      : "border-gray-400"
+                      }`}
+                  >
+                    <input
+                      type="text"
+                      name="license_number"
+                      value={formData.license_number || ""}
+                      {...getInputProps({
+                        onChange: handleChange,
+                        className:
+                          "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
+                        disabled:
+                          loading ||
+                          formData.has_valid_license === "false" ||
+                          formData.has_valid_license === "",
+                      })}
+                    />
+                  </div>
+                  {errors.license_number && (
+                    <p className="text-red-500 text-xs mt-1">
+                      {errors.license_number}
+                    </p>
+                  )}
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    License Expiration Date <span className="text-red-600">*</span>
+                  </label>
+                  <div
+                    className={`border-b-2 pb-1 print:border-b-0 ${errors.expiration_date
                       ? "border-red-500"
                       : "border-gray-400"
                       }`}
                   >
                     <input
                       type="date"
-                      name="date_prepared"
-                      value={formData.date_prepared}
+                      name="expiration_date"
+                      value={formData.expiration_date || ""}
                       {...getInputProps({
                         onChange: handleChange,
                         className:
                           "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
-                        disabled: loading,
+                        disabled:
+                          loading ||
+                          formData.has_valid_license === "false" ||
+                          formData.has_valid_license === "",
                       })}
                     />
                   </div>
-                  {errors.date_prepared && (
+                  {errors.expiration_date && (
                     <p className="text-red-500 text-xs mt-1">
-                      {errors.date_prepared}
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Department <span className="text-red-600">*</span>
-                  </label>
-                  <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                    <input
-                      type="text"
-                      value={
-                        requestorDepartment ||
-                        (() => {
-                          const userData = localStorage.getItem("user");
-                          if (userData && !id) {
-                            try {
-                              const parsedUser = JSON.parse(userData);
-                              return parsedUser.department?.name || "";
-                            } catch (error) {
-                              return "";
-                            }
-                          }
-                          return "";
-                        })()
-                      }
-                      disabled
-                      className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Contact Number <span className="text-red-600">*</span>
-                  </label>
-                  <div
-                    className={`border-b-2 pb-1 print:border-b-0 ${errors.contact_number
-                      ? "border-red-500"
-                      : "border-gray-400"
-                      }`}
-                  >
-                    <input
-                      type="tel"
-                      name="contact_number"
-                      value={formData.contact_number}
-                      placeholder="e.g., 09171234567"
-                      {...getInputProps({
-                        onChange: (e) => {
-                          const value = e.target.value.replace(/[^0-9]/g, "");
-                          handleChange({
-                            target: { name: "contact_number", value },
-                          });
-                        },
-                        className:
-                          "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
-                        disabled: loading,
-                      })}
-                    />
-                  </div>
-                  {errors.contact_number && (
-                    <p className="text-red-500 text-xs mt-1">
-                      {errors.contact_number}
+                      {errors.expiration_date}
                     </p>
                   )}
                 </div>
               </div>
             </div>
+          )}
 
-            {/* Section 2: Request Details */}
-            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
-              <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
-                <h2 className="text-sm font-bold text-gray-900 uppercase">
-                  Section 2: Request Specific Details
-                </h2>
-              </div>
+          {/* Section 3: Requestor Signature */}
+          <SignatureSection
+            formData={formData}
+            user={user}
+            id={id}
+            isReadOnly={isReadOnly}
+            onSignatureSave={(signature) => setFormData(prev => ({ ...prev, requestor_signature: signature }))}
+          />
 
-              {/* Urgency Justification Display */}
-              {formData.urgency_justification && (
-                <div className="mb-3 md:mb-4 flex flex-col">
-                  <label className="text-xs font-semibold block mb-1 text-red-600">
-                    Justification for Same-Day Request
-                  </label>
-                  <textarea
-                    value={formData.urgency_justification}
-                    readOnly
-                    className="w-full border border-red-300 bg-red-50 px-2 py-1 text-xs focus:outline-none"
-                    rows="2"
-                  ></textarea>
-                </div>
-              )}
+          {/* Section 4: General Services Section */}
+          <GeneralServicesSection
+            formData={formData}
+            isODHCUser={isODHCUser}
+            isViewing={isViewing}
+            isEditing={isEditing}
+            loading={loading}
+            availableDrivers={availableDrivers}
+            getRecommendedVehicles={getRecommendedVehicles}
+            getAvailableVehiclesMessage={getAvailableVehiclesMessage}
+            isDriverAvailable={isDriverAvailable}
+            isVehicleAvailable={isVehicleAvailable}
+            isVehicleRecommended={isVehicleRecommended}
+            selectedVehicle={selectedVehicle}
+            availableVehicles={availableVehicles}
+            handleChange={handleChange}
+            handleSaveSection4={handleSaveSection4}
+          />
 
-              {/* Purpose */}
-              <div className="mb-3 md:mb-4 flex flex-col">
-                <label className="text-xs font-semibold block mb-1 text-gray-700">
-                  Purpose of Request <span className="text-red-600">*</span>
-                </label>
-                <textarea
-                  name="purpose"
-                  value={formData.purpose}
-                  {...getInputProps({
-                    onChange: handleChange,
-                    className:
-                      "w-full border border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
-                    disabled: loading || isReadOnly,
-                    rows: "2",
-                  })}
-                ></textarea>
-                {renderFieldError("purpose")}
-              </div>
-
-              {/* Request Type */}
-              <div className="mb-3 md:mb-4 flex flex-col">
-                <label className="text-xs font-semibold block mb-1 text-gray-700">
-                  Type of Request <span className="text-red-600">*</span>
-                </label>
-                <select
-                  name="request_type"
-                  value={formData.request_type}
-                  {...getInputProps({
-                    onChange: handleChange,
-                    className:
-                      "w-full border border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
-                    disabled: loading || isReadOnly,
-                  })}
-                >
-                  <option value="" disabled>
-                    Select Request Type
-                  </option>
-                  {REQUEST_TYPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                {renderFieldError("request_type")}
-              </div>
-
-              {/* Travel Dates */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 md:gap-x-8 md:gap-y-2 mb-3 md:mb-4">
-                <div className="flex flex-col">
-                  <label className="text-xs font-semibold mb-1 text-gray-700">
-                    Travel Date From <span className="text-red-600">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    name="travel_date_from"
-                    value={formData.travel_date_from}
-                    {...getInputProps({
-                      onChange: handleChange,
-                      className:
-                        "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
-                      disabled: loading || isReadOnly,
-                    })}
-                  />
-                  {renderFieldError("travel_date_from")}
-                </div>
-                <div className="flex flex-col">
-                  <label className="text-xs font-semibold mb-1 text-gray-700">
-                    Travel Date To <span className="text-red-600">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    name="travel_date_to"
-                    value={formData.travel_date_to}
-                    {...getInputProps({
-                      onChange: handleChange,
-                      className:
-                        "border-b border-black px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-900",
-                      disabled: loading || isReadOnly,
-                    })}
-                  />
-                  {renderFieldError("travel_date_to")}
-                </div>
-              </div>
-
-              {/* Dynamic Conditional Section */}
-              {formData.request_type && (
-                <TripDetails
-                  formData={formData}
-                  errors={errors}
-                  loading={loading}
-                  isViewing={isViewing}
-                  getInputProps={getInputProps}
-                  handleChange={handleChange}
-                  passengerActions={{
-                    add: addPassenger,
-                    remove: removePassenger,
-                    change: (index, field, value) => handlePassengerChange(index, field, value)
-                  }}
-                />
-              )}
+          {/* Attachments Section */}
+          <div className="border border-gray-400 p-4 mb-6 no-print">
+            <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
+              <h2 className="text-sm font-bold text-gray-900 uppercase">
+                Attachments
+              </h2>
             </div>
 
-            {/* Section 3: Driver's License Information - Only for car_only request type */}
-            {formData.request_type === "car_only" && (
-              <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
-                <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
-                  <h2 className="text-sm font-bold text-gray-900 uppercase">
-                    Section 3: Driver's License Information
-                  </h2>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
-                      Do you have a valid Driver's License? <span className="text-red-600">*</span>
+            {/* Show upload UI for:
+                  - Requestors: always (even when creating new request)
+                  - Approvers: when reviewing (submitted, returned, department_approved, or completed status)
+              */}
+            {(
+              // Requestors can upload if creating new, or status is draft/returned
+              (user?.role === "requestor" && (!id || ["draft", "returned"].includes(formData.status))) ||
+              // Approvers can upload when status is submitted, returned, department_approved, or completed
+              (id && (user?.role === "department_approver" || user?.role === "super_administrator") &&
+                ["submitted", "returned", "department_approved", "completed"].includes(formData.status))
+            ) && (
+                <div className="mb-4 no-print">
+                  <label className="block text-xs font-semibold text-gray-700 mb-2">
+                    Upload Files
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <label className="flex items-center px-4 py-2 bg-gray-100 border border-gray-300 rounded cursor-pointer hover:bg-gray-200 text-sm text-gray-900">
+                      <Paperclip className="h-4 w-4 mr-2" />
+                      {uploadingFiles ? "Uploading..." : "Choose Files"}
+                      <input
+                        type="file"
+                        multiple
+                        onChange={handleFileUpload}
+                        disabled={uploadingFiles || loading}
+                        className="hidden"
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.zip,.rar"
+                      />
                     </label>
-                    <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                      <select
-                        name="has_valid_license"
-                        value={formData.has_valid_license}
-                        {...getInputProps({
-                          onChange: handleChange,
-                          className:
-                            "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900",
-                          disabled: loading,
-                        })}
+                    <span className="text-xs text-gray-500">
+                      Max 10MB per file
+                    </span>
+                  </div>
+                  {!id && pendingFiles.length > 0 && (
+                    <p className="text-xs text-blue-600 mt-2">
+                      {pendingFiles.length} file(s) will be uploaded when you save the request.
+                    </p>
+                  )}
+                </div>
+              )}
+
+            {/* Show pending files (files selected but not yet uploaded) */}
+            {pendingFiles.length > 0 && (
+              <div className="mb-4">
+                <h3 className="text-xs font-semibold text-gray-700 mb-2">
+                  Pending Files (will be uploaded when saved)
+                </h3>
+                <div className="space-y-2">
+                  {pendingFiles.map((file, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between p-3 bg-yellow-50 border border-yellow-200 rounded"
+                    >
+                      <div className="flex items-center space-x-3 flex-1">
+                        <Paperclip className="h-4 w-4 text-yellow-600" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-900 truncate">
+                            {file.name}
+                          </p>
+                          <span className="text-xs text-gray-500">
+                            {formatFileSize(file.size || 0)}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemovePendingFile(index)}
+                        disabled={loading}
+                        className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50 no-print"
+                        title="Remove file"
                       >
-                        <option value="" disabled>
-                          Select
-                        </option>
-                        <option value="true">Yes</option>
-                        <option value="false">No</option>
-                      </select>
+                        <X className="h-4 w-4" />
+                      </button>
                     </div>
-                    {errors.has_valid_license && (
-                      <p className="text-red-500 text-xs mt-1">
-                        {errors.has_valid_license}
-                      </p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
-                      License Number <span className="text-red-600">*</span>
-                    </label>
-                    <div
-                      className={`border-b-2 pb-1 print:border-b-0 ${errors.license_number
-                        ? "border-red-500"
-                        : "border-gray-400"
-                        }`}
-                    >
-                      <input
-                        type="text"
-                        name="license_number"
-                        value={formData.license_number || ""}
-                        {...getInputProps({
-                          onChange: handleChange,
-                          className:
-                            "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
-                          disabled:
-                            loading ||
-                            formData.has_valid_license === "false" ||
-                            formData.has_valid_license === "",
-                        })}
-                      />
-                    </div>
-                    {errors.license_number && (
-                      <p className="text-red-500 text-xs mt-1">
-                        {errors.license_number}
-                      </p>
-                    )}
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">
-                      License Expiration Date <span className="text-red-600">*</span>
-                    </label>
-                    <div
-                      className={`border-b-2 pb-1 print:border-b-0 ${errors.expiration_date
-                        ? "border-red-500"
-                        : "border-gray-400"
-                        }`}
-                    >
-                      <input
-                        type="date"
-                        name="expiration_date"
-                        value={formData.expiration_date || ""}
-                        {...getInputProps({
-                          onChange: handleChange,
-                          className:
-                            "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 placeholder-gray-500",
-                          disabled:
-                            loading ||
-                            formData.has_valid_license === "false" ||
-                            formData.has_valid_license === "",
-                        })}
-                      />
-                    </div>
-                    {errors.expiration_date && (
-                      <p className="text-red-500 text-xs mt-1">
-                        {errors.expiration_date}
-                      </p>
-                    )}
-                  </div>
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* Section 3: Requestor Signature */}
-            <SignatureSection
-              formData={formData}
-              user={user}
-              id={id}
-              isReadOnly={isReadOnly}
-              onSignatureSave={(signature) => setFormData(prev => ({ ...prev, requestor_signature: signature }))}
-            />
-
-            {/* Section 4: General Services Section */}
-            <GeneralServicesSection
-              formData={formData}
-              isODHCUser={isODHCUser}
-              isViewing={isViewing}
-              isEditing={isEditing}
-              loading={loading}
-              availableDrivers={availableDrivers}
-              getRecommendedVehicles={getRecommendedVehicles}
-              getAvailableVehiclesMessage={getAvailableVehiclesMessage}
-              isDriverAvailable={isDriverAvailable}
-              isVehicleAvailable={isVehicleAvailable}
-              isVehicleRecommended={isVehicleRecommended}
-              selectedVehicle={selectedVehicle}
-              availableVehicles={availableVehicles}
-              handleChange={handleChange}
-              handleSaveSection4={handleSaveSection4}
-            />
-
-            {/* Attachments Section */}
-            <div className="border border-gray-400 p-4 mb-6 no-print">
-              <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
-                <h2 className="text-sm font-bold text-gray-900 uppercase">
-                  Attachments
-                </h2>
-              </div>
-
-              {/* Show upload UI for:
-                  - Requestors: always (even when creating new request)
-                  - Approvers: when reviewing (submitted, returned, department_approved, or completed status)
-              */}
-              {(
-                // Requestors can upload if creating new, or status is draft/returned
-                (user?.role === "requestor" && (!id || ["draft", "returned"].includes(formData.status))) ||
-                // Approvers can upload when status is submitted, returned, department_approved, or completed
-                (id && (user?.role === "department_approver" || user?.role === "super_administrator") &&
-                  ["submitted", "returned", "department_approved", "completed"].includes(formData.status))
-              ) && (
-                  <div className="mb-4 no-print">
-                    <label className="block text-xs font-semibold text-gray-700 mb-2">
-                      Upload Files
-                    </label>
-                    <div className="flex items-center space-x-2">
-                      <label className="flex items-center px-4 py-2 bg-gray-100 border border-gray-300 rounded cursor-pointer hover:bg-gray-200 text-sm text-gray-900">
-                        <Paperclip className="h-4 w-4 mr-2" />
-                        {uploadingFiles ? "Uploading..." : "Choose Files"}
-                        <input
-                          type="file"
-                          multiple
-                          onChange={handleFileUpload}
-                          disabled={uploadingFiles || loading}
-                          className="hidden"
-                          accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.zip,.rar"
-                        />
-                      </label>
-                      <span className="text-xs text-gray-500">
-                        Max 10MB per file
-                      </span>
-                    </div>
-                    {!id && pendingFiles.length > 0 && (
-                      <p className="text-xs text-blue-600 mt-2">
-                        {pendingFiles.length} file(s) will be uploaded when you save the request.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-              {/* Show pending files (files selected but not yet uploaded) */}
-              {pendingFiles.length > 0 && (
-                <div className="mb-4">
-                  <h3 className="text-xs font-semibold text-gray-700 mb-2">
-                    Pending Files (will be uploaded when saved)
-                  </h3>
-                  <div className="space-y-2">
-                    {pendingFiles.map((file, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center justify-between p-3 bg-yellow-50 border border-yellow-200 rounded"
-                      >
-                        <div className="flex items-center space-x-3 flex-1">
-                          <Paperclip className="h-4 w-4 text-yellow-600" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm text-gray-900 truncate">
-                              {file.name}
-                            </p>
-                            <span className="text-xs text-gray-500">
-                              {formatFileSize(file.size || 0)}
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRemovePendingFile(index)}
-                          disabled={loading}
-                          className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50 no-print"
-                          title="Remove file"
+            {/* Show uploaded attachments */}
+            {attachments.length > 0 ? (
+              <div className="space-y-2">
+                <h3 className="text-xs font-semibold text-gray-700 mb-2">
+                  Uploaded Files
+                </h3>
+                {attachments.map((attachment, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded"
+                  >
+                    <div className="flex items-center space-x-3 flex-1">
+                      <Paperclip className="h-4 w-4 text-gray-500" />
+                      <div className="flex-1 min-w-0">
+                        <a
+                          href={`${window.location.protocol}//${window.location.hostname}:3001${attachment.path}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-blue-600 hover:underline truncate block"
                         >
-                          <X className="h-4 w-4" />
-                        </button>
+                          {attachment.originalName || attachment.filename}
+                        </a>
+                        <span className="text-xs text-gray-500">
+                          {formatFileSize(attachment.size || 0)}
+                        </span>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Show uploaded attachments */}
-              {attachments.length > 0 ? (
-                <div className="space-y-2">
-                  <h3 className="text-xs font-semibold text-gray-700 mb-2">
-                    Uploaded Files
-                  </h3>
-                  {attachments.map((attachment, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded"
-                    >
-                      <div className="flex items-center space-x-3 flex-1">
-                        <Paperclip className="h-4 w-4 text-gray-500" />
-                        <div className="flex-1 min-w-0">
-                          <a
-                            href={`${window.location.protocol}//${window.location.hostname}:3001${attachment.path}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-blue-600 hover:underline truncate block"
-                          >
-                            {attachment.originalName || attachment.filename}
-                          </a>
-                          <span className="text-xs text-gray-500">
-                            {formatFileSize(attachment.size || 0)}
-                          </span>
-                        </div>
-                      </div>
-                      {/* Show delete button for:
+                    </div>
+                    {/* Show delete button for:
                           - Requestors: on their own draft or returned requests
                           - Approvers: on any request they can access
                       */}
-                      {id &&
-                        (
-                          (user?.role === "requestor" && ["draft", "returned"].includes(formData.status)) ||
-                          user?.role === "department_approver" ||
-                          user?.role === "super_administrator"
-                        ) && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleDeleteAttachment(attachment.filename)
-                            }
-                            disabled={loading}
-                            className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50 no-print"
-                            title="Delete attachment"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                !pendingFiles.length && (
-                  <p className="text-sm text-gray-500 italic">No attachments</p>
-                )
-              )}
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex justify-end space-x-4 pt-6 border-t-2 border-gray-400 mt-8 no-print">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 text-sm font-semibold flex items-center"
-              >
-                <div className="mr-2">🖨️</div> Print
-              </button>
-              <button
-                type="button"
-                onClick={handleCancel}
-                disabled={loading}
-                className="px-6 py-2 border-2 border-gray-400 rounded text-gray-700 hover:bg-gray-50 text-sm font-semibold disabled:opacity-50"
-              >
-                {isViewing ? "Back" : "Cancel"}
-              </button>
-
-              {/* Show edit/submit buttons for requestor when: creating, editing, or viewing returned requests */}
-              {user?.role === "requestor" &&
-                (isCreating || isEditing || isReturnedAndCanEdit) && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleSaveDraft}
-                      disabled={loading}
-                      className="flex items-center px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50 text-sm font-semibold"
-                    >
-                      <Save className="h-4 w-4 mr-2" />
-                      Save Draft
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSubmit}
-                      disabled={loading}
-                      className="flex items-center px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 text-sm font-semibold"
-                    >
-                      {loading ? (
-                        <Loader className="h-4 w-4 mr-2 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4 mr-2" />
+                    {id &&
+                      (
+                        (user?.role === "requestor" && ["draft", "returned"].includes(formData.status)) ||
+                        user?.role === "department_approver" ||
+                        user?.role === "super_administrator"
+                      ) && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDeleteAttachment(attachment.filename)
+                          }
+                          disabled={loading}
+                          className="p-1 text-red-600 hover:text-red-800 disabled:opacity-50 no-print"
+                          title="Delete attachment"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
                       )}
-                      {formData.status === "returned"
-                        ? "Resubmit Request"
-                        : "Submit Request"}
-                    </button>
-                  </>
-                )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              !pendingFiles.length && (
+                <p className="text-sm text-gray-500 italic">No attachments</p>
+              )
+            )}
+          </div>
 
-              {/* Verifier Actions */}
-              {isViewing && formData.verifier_id === user?.id && formData.verification_status === 'pending' && (
+          {/* Action Buttons */}
+          <div className="flex justify-end space-x-4 pt-6 border-t-2 border-gray-400 mt-8 no-print">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 text-sm font-semibold flex items-center"
+            >
+              <div className="mr-2">🖨️</div> Print
+            </button>
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={loading}
+              className="px-6 py-2 border-2 border-gray-400 rounded text-gray-700 hover:bg-gray-50 text-sm font-semibold disabled:opacity-50"
+            >
+              {isViewing ? "Back" : "Cancel"}
+            </button>
+
+            {/* Show edit/submit buttons for requestor when: creating, editing, or viewing returned requests */}
+            {user?.role === "requestor" &&
+              (isCreating || isEditing || isReturnedAndCanEdit) && (
                 <>
                   <button
                     type="button"
-                    onClick={() => handleVerifyClick('decline')}
-                    className="flex items-center px-6 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm font-semibold"
+                    onClick={handleSaveDraft}
+                    disabled={loading}
+                    className="flex items-center px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50 text-sm font-semibold"
                   >
-                    <XCircle className="h-4 w-4 mr-2" />
-                    Decline Verification
+                    <Save className="h-4 w-4 mr-2" />
+                    Save Draft
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleVerifyClick('verify')}
-                    className="flex items-center px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm font-semibold"
+                    onClick={handleSubmit}
+                    disabled={loading}
+                    className="flex items-center px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 text-sm font-semibold"
                   >
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                    Verify Request
+                    {loading ? (
+                      <Loader className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4 mr-2" />
+                    )}
+                    {formData.status === "returned"
+                      ? "Resubmit Request"
+                      : "Submit Request"}
                   </button>
                 </>
               )}
 
-              {/* Assign Verifier (ODHC) */}
-              {isViewing && isODHCUser && (formData.status === 'submitted' || formData.status === 'department_approved') && !['verified', 'declined'].includes(formData.verification_status) && (
+            {/* Verifier Actions */}
+            {isViewing && formData.verifier_id === user?.id && formData.verification_status === 'pending' && (
+              <>
                 <button
                   type="button"
-                  onClick={handleAssignVerifierClick}
-                  className="flex items-center px-6 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm font-semibold"
+                  onClick={() => handleVerifyClick('decline')}
+                  className="flex items-center px-6 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm font-semibold"
                 >
-                  <UserCheck className="h-4 w-4 mr-2" />
-                  Assign Verifier
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Decline Verification
                 </button>
+                <button
+                  type="button"
+                  onClick={() => handleVerifyClick('verify')}
+                  className="flex items-center px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm font-semibold"
+                >
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  Verify Request
+                </button>
+              </>
+            )}
+
+            {/* Assign Verifier (ODHC) */}
+            {isViewing && isODHCUser && (formData.status === 'submitted' || formData.status === 'department_approved') && !['verified', 'declined'].includes(formData.verification_status) && (
+              <button
+                type="button"
+                onClick={handleAssignVerifierClick}
+                className="flex items-center px-6 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm font-semibold"
+              >
+                <UserCheck className="h-4 w-4 mr-2" />
+                Assign Verifier
+              </button>
+            )}
+
+            {/* ODHC (Department Approver) Actions - Only for vehicle requests */}
+            {(() => {
+              // Allow approval/return/decline for: submitted, returned, and department_approved (for Step 2 approvers)
+              // Also allow for any workflow intermediate statuses
+              const canApprove =
+                isViewing &&
+                (user?.role === "department_approver" ||
+                  user?.role === "super_administrator") &&
+                (formData.status === "submitted" ||
+                  formData.status === "returned" ||
+                  ((isODHCUser || user?.role === "super_administrator") && formData.status === "department_approved") ||
+                  (formData.status &&
+                    formData.status !== "completed" &&
+                    formData.status !== "declined" &&
+                    formData.status !== "draft" &&
+                    formData.status !== "department_approved"));
+              if (
+                isViewing &&
+                (user?.role === "department_approver" ||
+                  user?.role === "super_administrator")
+              ) {
+                console.log(
+                  "Approval button check - isViewing:",
+                  isViewing,
+                  "role:",
+                  user?.role,
+                  "status:",
+                  formData.status,
+                  "canApprove:",
+                  canApprove
+                );
+              }
+              return canApprove;
+            })() && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleReturn}
+                    disabled={loading}
+                    className="flex items-center px-6 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50 text-sm font-semibold"
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Return
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDecline}
+                    disabled={loading}
+                    className="flex items-center px-6 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 text-sm font-semibold"
+                  >
+                    <XCircle className="h-4 w-4 mr-2" />
+                    Decline
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleApprove}
+                    disabled={
+                      loading ||
+                      (isODHCUser &&
+                        !(
+                          formData.assigned_driver &&
+                          formData.assigned_driver.trim() &&
+                          formData.assigned_vehicle &&
+                          formData.approval_date
+                        ))
+                    }
+                    className="flex items-center px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold"
+                    title={
+                      isODHCUser &&
+                        !(
+                          formData.assigned_driver &&
+                          formData.assigned_driver.trim() &&
+                          formData.assigned_vehicle &&
+                          formData.approval_date
+                        )
+                        ? "Please complete Section 4 (Assigned Driver, Assigned Vehicle, and Approval Date) before approving"
+                        : ""
+                    }
+                  >
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Approve & Complete
+                  </button>
+                </>
               )}
-
-              {/* ODHC (Department Approver) Actions - Only for vehicle requests */}
-              {(() => {
-                // Allow approval/return/decline for: submitted, returned, and department_approved (for Step 2 approvers)
-                // Also allow for any workflow intermediate statuses
-                const canApprove =
-                  isViewing &&
-                  (user?.role === "department_approver" ||
-                    user?.role === "super_administrator") &&
-                  (formData.status === "submitted" ||
-                    formData.status === "returned" ||
-                    ((isODHCUser || user?.role === "super_administrator") && formData.status === "department_approved") ||
-                    (formData.status &&
-                      formData.status !== "completed" &&
-                      formData.status !== "declined" &&
-                      formData.status !== "draft" &&
-                      formData.status !== "department_approved"));
-                if (
-                  isViewing &&
-                  (user?.role === "department_approver" ||
-                    user?.role === "super_administrator")
-                ) {
-                  console.log(
-                    "Approval button check - isViewing:",
-                    isViewing,
-                    "role:",
-                    user?.role,
-                    "status:",
-                    formData.status,
-                    "canApprove:",
-                    canApprove
-                  );
-                }
-                return canApprove;
-              })() && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleReturn}
-                      disabled={loading}
-                      className="flex items-center px-6 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50 text-sm font-semibold"
-                    >
-                      <RotateCcw className="h-4 w-4 mr-2" />
-                      Return
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleDecline}
-                      disabled={loading}
-                      className="flex items-center px-6 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 text-sm font-semibold"
-                    >
-                      <XCircle className="h-4 w-4 mr-2" />
-                      Decline
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleApprove}
-                      disabled={
-                        loading ||
-                        (isODHCUser &&
-                          !(
-                            formData.assigned_driver &&
-                            formData.assigned_driver.trim() &&
-                            formData.assigned_vehicle &&
-                            formData.approval_date
-                          ))
-                      }
-                      className="flex items-center px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold"
-                      title={
-                        isODHCUser &&
-                          !(
-                            formData.assigned_driver &&
-                            formData.assigned_driver.trim() &&
-                            formData.assigned_vehicle &&
-                            formData.approval_date
-                          )
-                          ? "Please complete Section 4 (Assigned Driver, Assigned Vehicle, and Approval Date) before approving"
-                          : ""
-                      }
-                    >
-                      <CheckCircle className="h-4 w-4 mr-2" />
-                      Approve & Complete
-                    </button>
-                  </>
-                )}
-            </div>
-          </form>
-        </div>
+          </div>
+        </form>
       </div>
+    </div>
 
 
-      <VerifierAssignmentModal
-        isOpen={showVerifierModal}
-        onClose={() => setShowVerifierModal(false)}
-        onAssign={handleAssignVerifier}
-        loading={loading}
-      />
+    <VerifierAssignmentModal
+      isOpen={showVerifierModal}
+      onClose={() => setShowVerifierModal(false)}
+      onAssign={handleAssignVerifier}
+      loading={loading}
+    />
 
-      <VerificationResponseModal
-        isOpen={showVerificationActionModal}
-        onClose={() => setShowVerificationActionModal(false)}
-        onConfirm={handleVerificationConfirm}
-        action={verificationAction}
-        loading={loading}
-      />
-      {/* Justification Modal */}
-      {showJustificationModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-xl max-w-lg w-full">
-            <h3 className="text-lg font-bold text-red-600 mb-4 flex items-center">
-              <AlertCircle className="h-6 w-6 mr-2" />
-              Justification Required
-            </h3>
-            <p className="text-sm text-gray-700 mb-4">
-              As a general rule, same-day requests are not allowed.
-              <br />
-              Exceptions may be granted only in cases of emergency or business exigency, subject to approval.
-              <br /><br />
-              Please submit a justification.
-            </p>
-            <textarea
-              value={justificationReason}
-              onChange={(e) => setJustificationReason(e.target.value)}
-              className="w-full border border-gray-300 rounded p-2 mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"
-              placeholder="Enter your justification here..."
-              rows={4}
-            />
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => setShowJustificationModal(false)}
-                className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 text-sm font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleJustificationSubmit}
-                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm font-semibold"
-              >
-                Submit Request
-              </button>
-            </div>
+    <VerificationResponseModal
+      isOpen={showVerificationActionModal}
+      onClose={() => setShowVerificationActionModal(false)}
+      onConfirm={handleVerificationConfirm}
+      action={verificationAction}
+      loading={loading}
+    />
+    {/* Justification Modal */}
+    {showJustificationModal && (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white p-6 rounded-lg shadow-xl max-w-lg w-full">
+          <h3 className="text-lg font-bold text-red-600 mb-4 flex items-center">
+            <AlertCircle className="h-6 w-6 mr-2" />
+            Justification Required
+          </h3>
+          <p className="text-sm text-gray-700 mb-4">
+            As a general rule, same-day requests are not allowed.
+            <br />
+            Exceptions may be granted only in cases of emergency or business exigency, subject to approval.
+            <br /><br />
+            Please submit a justification.
+          </p>
+          <textarea
+            value={justificationReason}
+            onChange={(e) => setJustificationReason(e.target.value)}
+            className="w-full border border-gray-300 rounded p-2 mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"
+            placeholder="Enter your justification here..."
+            rows={4}
+          />
+          <div className="flex justify-end space-x-3">
+            <button
+              onClick={() => setShowJustificationModal(false)}
+              className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 text-sm font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleJustificationSubmit}
+              className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm font-semibold"
+            >
+              Submit Request
+            </button>
           </div>
         </div>
-      )}
+      </div>
+    )}
 
-      <ConfirmDialog
-        isOpen={confirmDialogState.isOpen}
-        onClose={() => setConfirmDialogState(prev => ({ ...prev, isOpen: false }))}
-        onConfirm={confirmDialogState.onConfirm}
-        title={confirmDialogState.title}
-        message={confirmDialogState.message}
-        variant={confirmDialogState.variant}
-        confirmText={confirmDialogState.confirmText}
-      />
+    <ConfirmDialog
+      isOpen={confirmDialogState.isOpen}
+      onClose={() => setConfirmDialogState(prev => ({ ...prev, isOpen: false }))}
+      onConfirm={confirmDialogState.onConfirm}
+      title={confirmDialogState.title}
+      message={confirmDialogState.message}
+      variant={confirmDialogState.variant}
+      confirmText={confirmDialogState.confirmText}
+    />
 
-      <ActionModal
-        isOpen={actionModalState.isOpen}
-        onClose={() => setActionModalState(prev => ({ ...prev, isOpen: false }))}
-        onConfirm={actionModalState.onConfirm}
-        title={actionModalState.title}
-        message={actionModalState.message}
-        inputLabel={actionModalState.inputLabel}
-        inputType={actionModalState.inputType}
-        variant={actionModalState.variant}
-        confirmText={actionModalState.confirmText}
-        allowEmpty={actionModalState.allowEmpty}
-        options={actionModalState.options}
-      />
-      <ReturnRequestModal
-        isOpen={showReturnModal}
-        onClose={() => setShowReturnModal(false)}
-        onConfirm={onReturnConfirm}
-        returnOptions={returnOptions}
-        loading={loading}
-      />
-    </div>
-  );
+    <ActionModal
+      isOpen={actionModalState.isOpen}
+      onClose={() => setActionModalState(prev => ({ ...prev, isOpen: false }))}
+      onConfirm={actionModalState.onConfirm}
+      title={actionModalState.title}
+      message={actionModalState.message}
+      inputLabel={actionModalState.inputLabel}
+      inputType={actionModalState.inputType}
+      variant={actionModalState.variant}
+      confirmText={actionModalState.confirmText}
+      allowEmpty={actionModalState.allowEmpty}
+      options={actionModalState.options}
+    />
+    <ReturnRequestModal
+      isOpen={showReturnModal}
+      onClose={() => setShowReturnModal(false)}
+      onConfirm={onReturnConfirm}
+      returnOptions={returnOptions}
+      loading={loading}
+    />
+  </div>
+);
 }

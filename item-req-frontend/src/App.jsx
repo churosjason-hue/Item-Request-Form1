@@ -184,20 +184,26 @@ function AppRoutes() {
 }
 
 import { ThemeProvider } from './contexts/ThemeContext';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import { queryClient } from './queryClient';
 
 function App() {
   return (
     <ThemeProvider>
-      <ToastProvider>
-        <AuthProvider>
-          <Router>
-            <div className="App dark:bg-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
-              <Toast />
-              <AppRoutes />
-            </div>
-          </Router>
-        </AuthProvider>
-      </ToastProvider>
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <AuthProvider>
+            <Router>
+              <div className="App dark:bg-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
+                <Toast />
+                <AppRoutes />
+              </div>
+            </Router>
+          </AuthProvider>
+        </ToastProvider>
+        <ReactQueryDevtools initialIsOpen={false} />
+      </QueryClientProvider>
     </ThemeProvider>
   );
 }

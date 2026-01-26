@@ -1,14 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Plus, Trash2, Save, Send, ArrowLeft, CheckCircle, XCircle, RotateCcw, PenTool } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { ToastContext } from '../contexts/ToastContext';
 import { requestsAPI, departmentsAPI, EQUIPMENT_CATEGORIES, PRIORITY_OPTIONS } from '../services/api';
 import SignatureModal from './SignatureModal';
+import ActionModal from './ActionModal';
+import ConfirmDialog from './ConfirmDialog';
+import ReturnRequestModal from './ReturnRequestModal';
 
 const RequestForm = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { success: toastSuccess, error: toastError, warning: toastWarning } = useContext(ToastContext);
 
   const currentPath = window.location.pathname;
   const isEditing = currentPath.includes('/edit');
@@ -50,6 +55,12 @@ const RequestForm = () => {
   const [tempRequestorSignature, setTempRequestorSignature] = useState('');
   const [tempApprovalSignature, setTempApprovalSignature] = useState('');
   const [currentApprovalId, setCurrentApprovalId] = useState(null); // Track which approval the modal is for
+
+  // New Modal States
+  const [confirmDialogState, setConfirmDialogState] = useState({ isOpen: false, title: "", message: "", onConfirm: () => { }, variant: "warning", confirmText: "Confirm" });
+  const [actionModalState, setActionModalState] = useState({ isOpen: false, title: "", message: "", onConfirm: () => { }, variant: "primary", inputType: "text", inputLabel: "" });
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnOptions, setReturnOptions] = useState([]);
 
   const canEditReturned = requestData?.status === 'returned' &&
     requestData?.requestor?.id === user?.id &&
@@ -129,7 +140,7 @@ const RequestForm = () => {
 
   useEffect(() => {
     if (isCreating && user?.role !== 'requestor') {
-      alert('Only users with the requestor role can create equipment requests');
+      toastWarning('Only users with the requestor role can create equipment requests');
       navigate('/dashboard');
       return;
     }
@@ -145,6 +156,7 @@ const RequestForm = () => {
       setDepartments(response.data.departments);
     } catch (error) {
       console.error('Error loading departments:', error);
+      toastError('Failed to load departments');
     }
   };
 
@@ -200,7 +212,7 @@ const RequestForm = () => {
       if (!isViewing) {
         navigate('/dashboard');
       } else {
-        setErrors({ load: error.response?.data?.message || 'Failed to load request' });
+        toastError(error.response?.data?.message || 'Failed to load request');
       }
     } finally {
       setLoading(false);
@@ -283,15 +295,17 @@ const RequestForm = () => {
       setLoading(true);
       if (isEditing) {
         await requestsAPI.update(id, formData);
+        toastSuccess('Request updated successfully');
       } else {
         const response = await requestsAPI.create(formData);
+        toastSuccess('Request created successfully');
         navigate(`/requests/${response.data.request.id}`);
         return;
       }
       navigate('/dashboard');
     } catch (error) {
       console.error('Error saving request:', error);
-      setErrors({ submit: error.response?.data?.message || 'Failed to save request' });
+      toastError(error.response?.data?.message || 'Failed to save request');
     } finally {
       setLoading(false);
     }
@@ -309,10 +323,11 @@ const RequestForm = () => {
         await requestsAPI.update(id, formData);
       }
       await requestsAPI.submit(requestId);
+      toastSuccess('Request submitted successfully');
       navigate('/dashboard');
     } catch (error) {
       console.error('Error submitting request:', error);
-      setErrors({ submit: error.response?.data?.message || 'Failed to submit request' });
+      toastError(error.response?.data?.message || 'Failed to submit request');
     } finally {
       setLoading(false);
     }
@@ -330,26 +345,37 @@ const RequestForm = () => {
 
     // Check if signature is provided
     if (!signatureToUse || signatureToUse.trim() === '') {
-      const proceed = confirm('No signature provided. Do you want to proceed without a signature?');
-      if (!proceed) return;
+      // We can handle missing signature warning here if needed, or rely on backend validation
+      // For now, let's proceed to modal
     }
 
-    const comments = prompt('Enter approval comments (optional):');
-    if (comments === null) return;
-    try {
-      setLoading(true);
-      await requestsAPI.approve(id, { comments, signature: signatureToUse || null });
-      alert('Request approved successfully!');
-      setApprovalSignature(''); // Clear signature after approval
-      setCurrentApprovalId(null); // Clear current approval ID
-      // Reload request data to show updated status and permissions
-      await loadRequest();
-    } catch (error) {
-      console.error('Error approving request:', error);
-      alert(error.response?.data?.message || 'Failed to approve request');
-    } finally {
-      setLoading(false);
-    }
+    setActionModalState({
+      isOpen: true,
+      title: "Approve Request",
+      message: "Please provide approval remarks (optional):",
+      inputLabel: "Remarks",
+      inputType: "textarea",
+      confirmText: "Approve",
+      variant: "success",
+      allowEmpty: true,
+      onConfirm: async (approvalReason) => {
+        setActionModalState(prev => ({ ...prev, isOpen: false }));
+        try {
+          setLoading(true);
+          await requestsAPI.approve(id, { comments: approvalReason, signature: signatureToUse || null });
+          toastSuccess('Request approved successfully!');
+          setApprovalSignature(''); // Clear signature after approval
+          setCurrentApprovalId(null); // Clear current approval ID
+          // Reload request data to show updated status and permissions
+          await loadRequest();
+        } catch (error) {
+          console.error('Error approving request:', error);
+          toastError(error.response?.data?.message || 'Failed to approve request');
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
   };
 
   const handleDecline = async () => {
@@ -362,42 +388,61 @@ const RequestForm = () => {
       }
     }
 
-    const comments = prompt('Enter reason for declining (required):');
-    if (!comments || comments.trim() === '') {
-      alert('Decline reason is required');
-      return;
-    }
-    if (!confirm('Are you sure you want to decline this request?')) return;
-    try {
-      setLoading(true);
-      await requestsAPI.decline(id, { comments, signature: signatureToUse || null });
-      alert('Request declined');
-      setApprovalSignature(''); // Clear signature after declining
-      setCurrentApprovalId(null); // Clear current approval ID
-      navigate('/dashboard');
-    } catch (error) {
-      console.error('Error declining request:', error);
-      alert(error.response?.data?.message || 'Failed to decline request');
-    } finally {
-      setLoading(false);
-    }
+    setActionModalState({
+      isOpen: true,
+      title: "Decline Request",
+      message: "Please provide reason for declining:",
+      inputLabel: "Reason",
+      inputType: "textarea",
+      confirmText: "Decline Request",
+      variant: "danger",
+      onConfirm: async (declineReason) => {
+        if (!declineReason) {
+          toastWarning('Decline reason is required');
+          return;
+        }
+
+        setActionModalState(prev => ({ ...prev, isOpen: false }));
+
+        try {
+          setLoading(true);
+          await requestsAPI.decline(id, { comments: declineReason, signature: signatureToUse || null });
+          toastSuccess('Request declined');
+          setApprovalSignature(''); // Clear signature after declining
+          setCurrentApprovalId(null); // Clear current approval ID
+          navigate('/dashboard');
+        } catch (error) {
+          console.error('Error declining request:', error);
+          toastError(error.response?.data?.message || 'Failed to decline request');
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
   };
 
   const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete this draft request? This action cannot be undone.')) {
-      return;
-    }
-    try {
-      setLoading(true);
-      await requestsAPI.delete(id);
-      alert('Draft request deleted successfully');
-      navigate('/dashboard');
-    } catch (error) {
-      console.error('Error deleting request:', error);
-      alert(error.response?.data?.message || 'Failed to delete request');
-    } finally {
-      setLoading(false);
-    }
+    setConfirmDialogState({
+      isOpen: true,
+      title: "Delete Draft?",
+      message: "Are you sure you want to delete this draft request? This action cannot be undone.",
+      variant: "danger",
+      confirmText: "Delete",
+      onConfirm: async () => {
+        setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
+        try {
+          setLoading(true);
+          await requestsAPI.delete(id);
+          toastSuccess('Draft request deleted successfully');
+          navigate('/dashboard');
+        } catch (error) {
+          console.error('Error deleting request:', error);
+          toastError(error.response?.data?.message || 'Failed to delete request');
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
   };
 
   const handleReturn = async () => {
@@ -410,30 +455,38 @@ const RequestForm = () => {
       }
     }
 
-    let returnTo = 'requestor';
+    // Determine return options
+    const options = [{ label: "Return to Requestor", value: "requestor" }];
     if (user.role === 'it_manager' || user.role === 'super_administrator') {
-      const choice = confirm(
-        'Where do you want to return this request?\n\n' +
-        'Click "OK" to return to Department Approver\n' +
-        'Click "Cancel" to return to Requestor'
-      );
-      returnTo = choice ? 'department_approver' : 'requestor';
+      // Based on previous logic, they could return to Dept Approver
+      options.push({ label: "Return to Department Approver", value: "department_approver" });
     }
-    const returnReason = prompt('Enter reason for returning (required):');
-    if (!returnReason || returnReason.trim() === '') {
-      alert('Return reason is required');
-      return;
+    setReturnOptions(options);
+    setShowReturnModal(true);
+  };
+
+  const onReturnConfirm = async (returnReason, returnTo) => {
+    setShowReturnModal(false);
+
+    // Get signature again (scope issue? no, component scope)
+    let signatureToUse = approvalSignature;
+    if (currentApprovalId && requestData?.approvals) {
+      const approval = requestData.approvals.find(a => a.id === currentApprovalId);
+      if (approval?.signature) {
+        signatureToUse = approval.signature;
+      }
     }
+
     try {
       setLoading(true);
       await requestsAPI.return(id, { returnReason, returnTo, signature: signatureToUse || null });
-      alert(`Request returned to ${returnTo === 'department_approver' ? 'Department Approver' : 'Requestor'}`);
+      toastSuccess(`Request returned to ${returnTo === 'department_approver' ? 'Department Approver' : 'Requestor'}`);
       setApprovalSignature(''); // Clear signature after returning
       setCurrentApprovalId(null); // Clear current approval ID
       navigate('/dashboard');
     } catch (error) {
       console.error('Error returning request:', error);
-      alert(error.response?.data?.message || 'Failed to return request');
+      toastError(error.response?.data?.message || 'Failed to return request');
     } finally {
       setLoading(false);
     }
@@ -1336,6 +1389,39 @@ const RequestForm = () => {
           // Also set the approvalSignature for use when approving
           setApprovalSignature(tempApprovalSignature);
         }}
+      />
+
+      {/* Action Modals */}
+      <ActionModal
+        isOpen={actionModalState.isOpen}
+        onClose={() => setActionModalState(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={actionModalState.onConfirm}
+        title={actionModalState.title}
+        message={actionModalState.message}
+        inputLabel={actionModalState.inputLabel}
+        inputType={actionModalState.inputType}
+        variant={actionModalState.variant}
+        confirmText={actionModalState.confirmText}
+        allowEmpty={actionModalState.allowEmpty}
+        options={actionModalState.options}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmDialogState.isOpen}
+        onClose={() => setConfirmDialogState(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmDialogState.onConfirm}
+        title={confirmDialogState.title}
+        message={confirmDialogState.message}
+        variant={confirmDialogState.variant}
+        confirmText={confirmDialogState.confirmText}
+      />
+
+      <ReturnRequestModal
+        isOpen={showReturnModal}
+        onClose={() => setShowReturnModal(false)}
+        onConfirm={onReturnConfirm}
+        returnOptions={returnOptions}
+        loading={loading}
       />
     </div>
   );
