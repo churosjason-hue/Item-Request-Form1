@@ -2,17 +2,24 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
-import Toast from './components/Toast';
-import LoginForm from './components/LoginForm';
-import Dashboard from './components/Dashboard';
-import RequestForm from './components/RequestForm';
-import UserManagement from './components/UserManagement';
-import DepartmentManagement from './components/DepartmentManagement';
-import TrackRequest from './components/TrackRequest';
-import ServiceVehicleRequestForm from './components/ServiceVehicleRequestForm';
-import FormSelector from './components/FormSelector';
-import WorkflowSettings from './components/WorkflowSettings';
-import AuditLogs from './components/AuditLogs';
+import Toast from './components/common/Toast';
+import LoginForm from './components/auth/LoginForm';
+import Dashboard from './components/dashboard/Dashboard';
+import RequestForm from './components/requests/RequestForm';
+import UserManagement from './components/admin/UserManagement';
+import DepartmentManagement from './components/admin/DepartmentManagement';
+import TrackRequest from './components/requests/TrackRequest';
+import ServiceVehicleRequestForm from './components/requests/ServiceVehicleRequestForm';
+import FormSelector from './components/requests/FormSelector';
+import WorkflowSettings from './components/admin/WorkflowSettings';
+import ApprovalMatrixSettings from './components/admin/ApprovalMatrixSettings';
+import AuditLogs from './components/audit/AuditLogs';
+import DeployedAssets from './components/inventory/DeployedAssets';
+import InventoryManagement from './components/admin/InventoryManagement';
+
+import ModuleRequestsPage from './components/requests/ModuleRequestsPage';
+import { MODULES } from './config/modules';
+import ChatbotWidget from './components/ChatbotWidget';
 import './App.css';
 
 // Protected Route Component
@@ -45,6 +52,8 @@ const PublicRoute = ({ children }) => {
   return !isAuthenticated ? children : <Navigate to="/dashboard" replace />;
 };
 
+import { Layout } from './components/common/Layout';
+
 function AppRoutes() {
   return (
     <Routes>
@@ -63,116 +72,37 @@ function AppRoutes() {
         element={<TrackRequest />}
       />
 
-      {/* Form Selector Route */}
-      <Route
-        path="/forms"
-        element={
-          <ProtectedRoute>
-            <FormSelector />
-          </ProtectedRoute>
-        }
-      />
+      {/* Protected Routes wrapped with Layout */}
+      <Route element={
+        <ProtectedRoute>
+          <Layout />
+        </ProtectedRoute>
+      }>
+        <Route path="/forms" element={<FormSelector />} />
+        <Route path="/dashboard" element={<Dashboard />} />
 
-      {/* Protected Routes */}
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute>
-            <Dashboard />
-          </ProtectedRoute>
-        }
-      />
+        {/* Module List Routes */}
+        <Route path="/requests" element={<ModuleRequestsPage moduleConfig={MODULES.ITEM} />} />
+        <Route path="/service-vehicle-requests" element={<ModuleRequestsPage moduleConfig={MODULES.VEHICLE} />} />
 
-      <Route
-        path="/requests/new"
-        element={
-          <ProtectedRoute>
-            <RequestForm />
-          </ProtectedRoute>
-        }
-      />
+        {/* Request Forms */}
+        <Route path="/requests/new" element={<RequestForm />} />
+        <Route path="/requests/:id/edit" element={<RequestForm />} />
+        <Route path="/requests/:id" element={<RequestForm />} />
 
-      <Route
-        path="/requests/:id/edit"
-        element={
-          <ProtectedRoute>
-            <RequestForm />
-          </ProtectedRoute>
-        }
-      />
+        <Route path="/service-vehicle-requests/new" element={<ServiceVehicleRequestForm />} />
+        <Route path="/service-vehicle-requests/:id/edit" element={<ServiceVehicleRequestForm />} />
+        <Route path="/service-vehicle-requests/:id" element={<ServiceVehicleRequestForm />} />
 
-      <Route
-        path="/requests/:id"
-        element={
-          <ProtectedRoute>
-            <RequestForm />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/service-vehicle-requests/new"
-        element={
-          <ProtectedRoute>
-            <ServiceVehicleRequestForm />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/service-vehicle-requests/:id/edit"
-        element={
-          <ProtectedRoute>
-            <ServiceVehicleRequestForm />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/service-vehicle-requests/:id"
-        element={
-          <ProtectedRoute>
-            <ServiceVehicleRequestForm />
-          </ProtectedRoute>
-        }
-      />
-
-
-
-      <Route
-        path="/users"
-        element={
-          <ProtectedRoute>
-            <UserManagement />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/departments"
-        element={
-          <ProtectedRoute>
-            <DepartmentManagement />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/settings/workflows"
-        element={
-          <ProtectedRoute>
-            <WorkflowSettings />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/audit-logs"
-        element={
-          <ProtectedRoute>
-            <AuditLogs />
-          </ProtectedRoute>
-        }
-      />
+        {/* Management & Admin Routes */}
+        <Route path="/users" element={<UserManagement />} />
+        <Route path="/departments" element={<DepartmentManagement />} />
+        <Route path="/settings/workflows" element={<WorkflowSettings />} />
+        <Route path="/settings/approval-matrix" element={<ApprovalMatrixSettings />} />
+        <Route path="/audit-logs" element={<AuditLogs />} />
+        <Route path="/deployed-assets" element={<DeployedAssets />} />
+        <Route path="/inventory" element={<InventoryManagement />} />
+      </Route>
 
       {/* Default redirect */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -184,26 +114,21 @@ function AppRoutes() {
 }
 
 import { ThemeProvider } from './contexts/ThemeContext';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { queryClient } from './queryClient';
 
 function App() {
   return (
     <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <ToastProvider>
-          <AuthProvider>
-            <Router>
-              <div className="App dark:bg-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
-                <Toast />
-                <AppRoutes />
-              </div>
-            </Router>
-          </AuthProvider>
-        </ToastProvider>
-        <ReactQueryDevtools initialIsOpen={false} />
-      </QueryClientProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <Router>
+            <div className="App dark:bg-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
+              <Toast />
+              <AppRoutes />
+              <ChatbotWidget />
+            </div>
+          </Router>
+        </AuthProvider>
+      </ToastProvider>
     </ThemeProvider>
   );
 }

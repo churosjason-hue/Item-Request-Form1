@@ -10,7 +10,7 @@ import { logAudit, calculateChanges } from '../utils/auditLogger.js';
 const router = express.Router();
 
 // Get all users (admin and IT manager only)
-router.get('/', authenticateToken, requireRole('super_administrator', 'it_manager', 'department_approver'), async (req, res) => {
+router.get('/', authenticateToken, requireRole('super_administrator', 'it_manager', 'endorser', 'department_approver'), async (req, res) => {
   try {
     const { search, department, role, status, page = 1, limit = 50 } = req.query;
 
@@ -142,7 +142,7 @@ router.patch('/:id/role', authenticateToken, requireRole('super_administrator'),
     const { id } = req.params;
     const { role } = req.body;
 
-    const validRoles = ['requestor', 'department_approver', 'it_manager', 'service_desk', 'super_administrator'];
+    const validRoles = ['requestor', 'department_approver', 'endorser', 'it_manager', 'service_desk', 'super_administrator'];
 
     if (!validRoles.includes(role)) {
       return res.status(400).json({
@@ -550,7 +550,7 @@ router.post('/sync', authenticateToken, requireRole('super_administrator'), asyn
 });
 
 // Sync single user from AD (admin and IT manager only)
-router.post('/:username/sync', authenticateToken, requireRole('super_administrator', 'it_manager'), async (req, res) => {
+router.post('/:username/sync', authenticateToken, requireRole('super_administrator', 'it_manager', 'endorser'), async (req, res) => {
   try {
     const { username } = req.params;
 
@@ -595,7 +595,7 @@ router.post('/:username/sync', authenticateToken, requireRole('super_administrat
 });
 
 // Get sync status (admin and IT manager only)
-router.get('/sync/status', authenticateToken, requireRole('super_administrator', 'it_manager'), (req, res) => {
+router.get('/sync/status', authenticateToken, requireRole('super_administrator', 'it_manager', 'endorser'), (req, res) => {
   try {
     const status = userSyncService.getSyncStatus();
     res.json(status);
@@ -656,7 +656,7 @@ router.get('/department/:departmentId', authenticateToken, async (req, res) => {
 });
 
 // Export users to Excel (super admin and IT manager only)
-router.get('/export/excel', authenticateToken, requireRole('super_administrator', 'it_manager'), async (req, res) => {
+router.get('/export/excel', authenticateToken, requireRole('super_administrator', 'it_manager', 'endorser'), async (req, res) => {
   try {
     const { search, department, role, status } = req.query;
 

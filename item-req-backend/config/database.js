@@ -13,10 +13,10 @@ const sequelize = new Sequelize({
   dialect: 'postgres',
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
-    max: 10,
-    min: 0,
-    acquire: 30000,
-    idle: 10000
+    max: 20, // Increased max connections
+    min: 2, // Keep at least 2 connections open
+    acquire: 60000, // Increase acquire timeout to 60s
+    idle: 30000 // Increase idle timeout to 30s
   },
   define: {
     timestamps: true,

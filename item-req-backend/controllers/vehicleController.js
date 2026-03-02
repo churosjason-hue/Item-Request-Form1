@@ -1,4 +1,5 @@
 import Vehicle from '../models/Vehicle.js';
+import { logAudit, calculateChanges } from '../utils/auditLogger.js';
 
 // Get all vehicles
 export const getAllVehicles = async (req, res) => {
@@ -18,11 +19,11 @@ export const getVehicleById = async (req, res) => {
   try {
     const { id } = req.params;
     const vehicle = await Vehicle.findByPk(id);
-    
+
     if (!vehicle) {
       return res.status(404).json({ error: 'Vehicle not found' });
     }
-    
+
     res.json(vehicle);
   } catch (error) {
     console.error('Error fetching vehicle:', error);
@@ -34,7 +35,7 @@ export const getVehicleById = async (req, res) => {
 export const createVehicle = async (req, res) => {
   try {
     const { make, model, year, plate, seaters } = req.body;
-    
+
     // Validation
     if (!make || !model || !year || !plate || !seaters) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -52,6 +53,18 @@ export const createVehicle = async (req, res) => {
       year: parseInt(year),
       plate,
       seaters: parseInt(seaters)
+    });
+
+    await logAudit({
+      req,
+      action: 'CREATE',
+      entityType: 'Vehicle',
+      entityId: vehicle.id,
+      details: {
+        make,
+        model,
+        plate
+      }
     });
 
     res.status(201).json(vehicle);
@@ -80,6 +93,8 @@ export const updateVehicle = async (req, res) => {
       }
     }
 
+    const oldData = vehicle.toJSON();
+
     // Update vehicle
     await vehicle.update({
       make: make || vehicle.make,
@@ -88,6 +103,22 @@ export const updateVehicle = async (req, res) => {
       plate: plate || vehicle.plate,
       seaters: seaters ? parseInt(seaters) : vehicle.seaters
     });
+
+    const newData = vehicle.toJSON();
+    const changes = calculateChanges(oldData, newData);
+
+    if (Object.keys(changes).length > 0) {
+      await logAudit({
+        req,
+        action: 'UPDATE',
+        entityType: 'Vehicle',
+        entityId: vehicle.id,
+        details: {
+          changes,
+          plate: vehicle.plate
+        }
+      });
+    }
 
     res.json(vehicle);
   } catch (error) {
@@ -100,13 +131,27 @@ export const updateVehicle = async (req, res) => {
 export const deleteVehicle = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const vehicle = await Vehicle.findByPk(id);
     if (!vehicle) {
       return res.status(404).json({ error: 'Vehicle not found' });
     }
 
+    const vehicleDetails = {
+      plate: vehicle.plate,
+      model: vehicle.model
+    };
+
     await vehicle.destroy();
+
+    await logAudit({
+      req,
+      action: 'DELETE',
+      entityType: 'Vehicle',
+      entityId: id,
+      details: vehicleDetails
+    });
+
     res.json({ message: 'Vehicle deleted successfully' });
   } catch (error) {
     console.error('Error deleting vehicle:', error);

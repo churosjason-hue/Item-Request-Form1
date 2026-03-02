@@ -25,11 +25,7 @@ const Approval = sequelize.define('Approval', {
     }
   },
   approval_type: {
-    type: DataTypes.ENUM(
-      'department_approval',
-      'it_manager_approval',
-      'service_desk_processing'
-    ),
+    type: DataTypes.STRING,
     allowNull: false
   },
   status: {
@@ -109,6 +105,7 @@ Approval.prototype.approve = function (comments = null) {
   this.approved_at = new Date();
   this.declined_at = null;
   this.returned_at = null;
+  this.return_reason = null; // Clear any previous return reason
 };
 
 Approval.prototype.decline = function (comments = null) {
@@ -117,6 +114,7 @@ Approval.prototype.decline = function (comments = null) {
   this.declined_at = new Date();
   this.approved_at = null;
   this.returned_at = null;
+  this.return_reason = null; // Clear any previous return reason
 };
 
 Approval.prototype.returnForRevision = function (reason) {
@@ -141,6 +139,7 @@ Approval.prototype.getStatusDisplayName = function () {
 Approval.prototype.getApprovalTypeDisplayName = function () {
   const typeNames = {
     'department_approval': 'Department Approval',
+    'endorser_approval': 'Endorser Approval',
     'it_manager_approval': 'IT Manager Approval',
     'service_desk_processing': 'Service Desk Processing'
   };

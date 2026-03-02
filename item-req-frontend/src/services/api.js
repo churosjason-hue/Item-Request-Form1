@@ -22,6 +22,15 @@ const getApiUrl = () => {
   return apiUrl;
 };
 
+// Export base URL getter for static file access (uploads, etc.)
+export const getBaseUrl = () => {
+  const hostname = window.location.hostname;
+  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    return `http://${hostname}:3001`;
+  }
+  return 'http://localhost:3001';
+};
+
 // Create axios instance with base configuration
 const api = axios.create({
   baseURL: getApiUrl(),
@@ -110,7 +119,15 @@ export const requestsAPI = {
   cancel: (id) => api.post(`/requests/${id}/cancel`),
   delete: (id) => api.delete(`/requests/${id}`),
   getStats: () => api.get('/requests/stats/overview'),
-  trackByTicket: (ticketCode) => api.get(`/requests/public/track/${ticketCode}`)
+  trackByTicket: (ticketCode) => api.get(`/requests/public/track/${ticketCode}`),
+  restockItem: (id, itemId) => api.post(`/requests/${id}/items/${itemId}/restock`),
+  deleteItem: (id, itemId) => api.delete(`/requests/${id}/items/${itemId}`),
+  uploadAttachments: (id, formData) => api.post(`/requests/${id}/attachments`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  deleteAttachment: (id, index) => api.delete(`/requests/${id}/attachments/${index}`),
+  approvePR: (id, data) => api.post(`/requests/${id}/approve-pr`, data),
+  readyToDeploy: (id) => api.post(`/requests/${id}/ready-to-deploy`),
 };
 
 // Equipment categories for the form
@@ -133,9 +150,13 @@ export const REQUEST_STATUSES = [
   { value: 'submitted', label: 'Submitted', color: 'blue' },
   { value: 'department_approved', label: 'Department Approved', color: 'green' },
   { value: 'department_declined', label: 'Department Declined', color: 'red' },
+  { value: 'checked_endorsed', label: 'Checked and Endorsed', color: 'green' },
+  { value: 'endorser_declined', label: 'Endorser Declined', color: 'red' },
   { value: 'it_manager_approved', label: 'IT Manager Approved', color: 'green' },
   { value: 'it_manager_declined', label: 'IT Manager Declined', color: 'red' },
   { value: 'service_desk_processing', label: 'Service Desk Processing', color: 'yellow' },
+  { value: 'ready_to_deploy', label: 'Ready to Deploy', color: 'blue' },
+  { value: 'pr_approved', label: 'PR Approved', color: 'green' },
   { value: 'completed', label: 'Completed', color: 'green' },
   { value: 'cancelled', label: 'Cancelled', color: 'gray' },
   { value: 'returned', label: 'Returned for Revision', color: 'orange' }
@@ -153,6 +174,7 @@ export const PRIORITY_OPTIONS = [
 export const USER_ROLES = [
   { value: 'requestor', label: 'Requestor' },
   { value: 'department_approver', label: 'Department Approver' },
+  { value: 'endorser', label: 'Endorser' },
   { value: 'it_manager', label: 'IT Manager' },
   { value: 'service_desk', label: 'Service Desk' },
   { value: 'super_administrator', label: 'Super Administrator' }
@@ -168,7 +190,7 @@ export const serviceVehicleRequestsAPI = {
   approve: (id, data) => api.post(`/service-vehicle-requests/${id}/approve`, data),
   decline: (id, data) => api.post(`/service-vehicle-requests/${id}/decline`, data),
   return: (id, data) => api.post(`/service-vehicle-requests/${id}/return`, data),
-  cancel: (id) => api.post(`/service-vehicle-requests/${id}/cancel`),
+  cancel: (id, data) => api.put(`/service-vehicle-requests/${id}/cancel`, data),
   delete: (id) => api.delete(`/service-vehicle-requests/${id}`),
   assign: (id, data) => api.post(`/service-vehicle-requests/${id}/assign`, data),
   getStats: () => api.get('/service-vehicle-requests/stats/overview'),
@@ -213,9 +235,41 @@ export const driverManagementApi = {
   delete: (id) => api.delete(`/drivers/${id}`),
 }
 
+// Categories API
+export const categoriesAPI = {
+  getAll: () => api.get('/categories'),
+  create: (data) => api.post('/categories', data),
+  update: (id, data) => api.put(`/categories/${id}`, data),
+  delete: (id) => api.delete(`/categories/${id}`)
+};
+
+// Items API
+export const itemsAPI = {
+  getAll: (params) => api.get('/items', { params }),
+  getById: (id) => api.get(`/items/${id}`),
+  create: (data) => api.post('/items', data),
+  update: (id, data) => api.put(`/items/${id}`, data),
+  delete: (id) => api.delete(`/items/${id}`)
+};
+
 // Audit Logs API
 export const auditLogsAPI = {
   getAll: (params) => api.get('/audit-logs', { params })
+};
+
+export const settingsAPI = {
+  get: (key) => api.get(`/settings/${key}`),
+  update: (key, value) => api.put(`/settings/${key}`, { value }),
+  getGeneralPurposes: () => api.get('/settings/general-purposes')
+};
+
+// Approval Matrix API
+export const approvalMatrixAPI = {
+  getAll: () => api.get('/approval-matrix'),
+  getById: (id) => api.get(`/approval-matrix/${id}`),
+  create: (data) => api.post('/approval-matrix', data),
+  update: (id, data) => api.put(`/approval-matrix/${id}`, data),
+  delete: (id) => api.delete(`/approval-matrix/${id}`)
 };
 
 export default api;

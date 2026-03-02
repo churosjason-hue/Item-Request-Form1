@@ -12,7 +12,7 @@ export default function PassengerList({
     getInputProps
 }) {
     return (
-        <div className="border-t border-gray-300 pt-4 mt-4">
+        <div className="border-t border-gray-300 pt-4 mt-4 print:pt-2 print:mt-2">
             <div className="flex justify-between items-center mb-3">
                 <h3 className="text-xs font-bold text-gray-900">
                     Passengers
@@ -30,14 +30,14 @@ export default function PassengerList({
                 )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 print:!grid-cols-4 print:!gap-2">
                 {passengers.map((passenger, index) => (
                     <div
                         key={index}
-                        className="bg-gray-50 p-3 border border-gray-300"
+                        className="bg-gray-50 p-3 border border-gray-300 print:!p-0 print:!border-0 print:!bg-transparent"
                     >
                         <div className="flex justify-between items-center mb-2">
-                            <span className="text-xs font-semibold text-gray-700">
+                            <span className="text-xs font-semibold text-gray-700 print:!text-gray-900">
                                 Passenger {index + 1}
                             </span>
                             {!isViewing && passengers.length > 1 && (
@@ -57,13 +57,13 @@ export default function PassengerList({
                                 <label className="block text-xs font-semibold text-gray-700 mb-1">
                                     Name <span className="text-red-600">*</span>
                                 </label>
-                                <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
+                                <div className="border-b-2 border-gray-400 pb-1 print:!border-b-0 print:!pb-0">
                                     <input
                                         type="text"
                                         value={passenger.name}
                                         {...getInputProps({
                                             onChange: (e) => onChange(index, "name", e.target.value),
-                                            className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                                            className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 print:text-xs",
                                             disabled: loading,
                                         })}
                                     />

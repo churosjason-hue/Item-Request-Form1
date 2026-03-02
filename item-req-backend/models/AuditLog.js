@@ -26,6 +26,7 @@ const AuditLog = sequelize.define('AuditLog', {
             'UPDATE',
             'DELETE',
             'LOGIN',
+            'LOGIN_FAILED',
             'LOGOUT',
             'APPROVE',
             'DECLINE',

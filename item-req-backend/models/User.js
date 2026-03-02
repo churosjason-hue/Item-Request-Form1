@@ -60,13 +60,20 @@ const User = sequelize.define('User', {
   role: {
     type: DataTypes.ENUM(
       'requestor',
-      'department_approver', 
+      'department_approver',
+      'endorser',
       'it_manager',
       'service_desk',
       'super_administrator'
     ),
     allowNull: false,
     defaultValue: 'requestor'
+  },
+  custom_roles: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: [],
+    comment: 'Array of custom role strings for dynamic workflows (e.g. ["Supervisor", "Head Manager"])'
   },
   is_active: {
     type: DataTypes.BOOLEAN,
@@ -114,24 +121,29 @@ const User = sequelize.define('User', {
 });
 
 // Instance methods
-User.prototype.getFullName = function() {
+User.prototype.getFullName = function () {
   return `${this.first_name} ${this.last_name}`;
 };
 
-User.prototype.canApproveForDepartment = function(departmentId) {
+User.prototype.canApproveForDepartment = function (departmentId) {
   return this.role === 'department_approver' && this.department_id === departmentId;
 };
 
-User.prototype.canApproveAsITManager = function() {
+User.prototype.canApproveAsITManager = function () {
   return this.role === 'it_manager' || this.role === 'super_administrator';
 };
 
-User.prototype.canProcessRequests = function() {
+User.prototype.canProcessRequests = function () {
   return ['service_desk', 'it_manager', 'super_administrator'].includes(this.role);
 };
 
-User.prototype.isAdmin = function() {
+User.prototype.isAdmin = function () {
   return this.role === 'super_administrator';
+};
+
+User.prototype.hasCustomRole = function (roleName) {
+  if (!this.custom_roles || !Array.isArray(this.custom_roles)) return false;
+  return this.custom_roles.includes(roleName);
 };
 
 export default User;

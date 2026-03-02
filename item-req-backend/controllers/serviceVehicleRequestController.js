@@ -77,9 +77,7 @@ export const getAllRequests = async (req, res) => {
             // Requestors can only see their own requests
             roleAccessClause.requested_by = req.user.id;
         } else if (req.user.role === "department_approver") {
-            // For vehicle requests, ODHC department approvers should see ALL requests
-            // (since all vehicle requests are routed to ODHC)
-            // Check if user is from ODHC department
+            // Check if user is from the ODHC (vehicle steward) department
             const odhcDepartment = await Department.findOne({
                 where: {
                     is_vehicle_steward: true,
@@ -88,26 +86,24 @@ export const getAllRequests = async (req, res) => {
             });
 
             if (odhcDepartment && req.user.department_id === odhcDepartment.id) {
-                // ODHC department approver can see all vehicle requests
-                // But should only see 'submitted' requests from their own department
+                // ODHC department approver can see all non-draft vehicle requests
                 roleAccessClause = {
-                    [Op.or]: [
-                        { status: ['department_approved', 'completed', 'returned', 'declined'] },
-                        {
-                            status: 'submitted',
-                            department_id: req.user.department_id
-                        }
-                    ]
+                    status: ['submitted', 'department_approved', 'completed', 'returned', 'declined']
                 };
             } else {
-                // Other department approvers can see requests from their department
-                roleAccessClause.department_id = req.user.department_id;
+                // Non-ODHC department_approver (e.g. acting as temporary verifier):
+                // Do NOT grant department-wide access. The Op.or clause below
+                // already handles visibility via verifier_id for assigned requests.
+                roleAccessClause = { requested_by: -1 }; // matches nothing — intentional
             }
+        } else {
+            // Default for any other role: can only see their own requests
+            roleAccessClause.requested_by = req.user.id;
         }
 
         // Construct final where clause combining role access and verifier access
         let whereClause = {};
-        if (["it_manager", "service_desk", "super_administrator"].includes(req.user.role)) {
+        if (["it_manager", "super_administrator"].includes(req.user.role)) {
             // Unrestricted access
         } else {
             // Restricted access: Role OR Assigned Verifier
@@ -318,12 +314,11 @@ export const getRequestById = async (req, res) => {
         if (req.user.id === request.requested_by) {
             // Requestor can always see their own request
             hasAccess = true;
-        } else if (["it_manager", "service_desk", "super_administrator"].includes(req.user.role)) {
+        } else if (["it_manager", "super_administrator"].includes(req.user.role)) {
             // IT managers, service desk, and super admins can see all requests
             hasAccess = true;
         } else if (req.user.role === "department_approver") {
-            // For vehicle requests, ODHC department approvers should see ALL requests
-            // Check if user is from ODHC department
+            // For vehicle requests, only ODHC department approvers have broad access.
             const odhcDepartment = await Department.findOne({
                 where: {
                     is_vehicle_steward: true,
@@ -334,10 +329,9 @@ export const getRequestById = async (req, res) => {
             if (odhcDepartment && req.user.department_id === odhcDepartment.id) {
                 // ODHC department approver can see all vehicle requests
                 hasAccess = true;
-            } else if (req.user.department_id === request.department_id) {
-                // Other department approvers can see requests from their department
-                hasAccess = true;
             }
+            // Non-ODHC department_approvers: access is granted ONLY via the verifier_id
+            // check below. Department membership alone is NOT sufficient.
         } else if (req.user.department_id === request.department_id) {
             // Users from the same department can see the request
             hasAccess = true;
@@ -411,6 +405,7 @@ export const createRequest = async (req, res) => {
             departure_time,
             destination_car,
             has_valid_license,
+            driver_name,
             license_number,
             expiration_date,
             comments,
@@ -454,13 +449,17 @@ export const createRequest = async (req, res) => {
                 request_type === "car_only"
                     ? has_valid_license === "true" || has_valid_license === true
                     : true,
+            driver_name:
+                request_type === "car_only"
+                    ? driver_name || null
+                    : null,
             license_number:
-                request_type === "car_only" && has_valid_license
-                    ? license_number
+                request_type === "car_only"
+                    ? license_number || null
                     : null,
             expiration_date:
-                request_type === "car_only" && has_valid_license
-                    ? formatDate(expiration_date)
+                request_type === "car_only"
+                    ? formatDate(expiration_date) || null
                     : null,
             requested_by: req.user.id,
             reference_code: generateReferenceCode(),
@@ -563,6 +562,7 @@ export const updateRequest = async (req, res) => {
             "departure_time",
             "destination_car",
             "has_valid_license",
+            "driver_name",
             "license_number",
             "expiration_date",
             "comments",
@@ -609,6 +609,7 @@ export const updateRequest = async (req, res) => {
                         "passenger_name",
                         "destination",
                         "destination_car",
+                        "driver_name",
                         "license_number",
                         "comments",
                         "urgency_justification",
@@ -669,6 +670,15 @@ export const submitRequest = async (req, res) => {
             return res.status(403).json({
                 success: false,
                 message: "You can only submit your own requests",
+            });
+        }
+
+        // If it's already submitted, we can just return success for an update & resubmit
+        if (request.status === "submitted") {
+            return res.json({
+                success: true,
+                message: "Service vehicle request updated",
+                request,
             });
         }
 
@@ -1427,6 +1437,89 @@ export const returnRequest = async (req, res) => {
     }
 };
 
+export const cancelRequest = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+
+        if (!reason || !reason.trim()) {
+            return res.status(400).json({ success: false, message: "A reason for cancellation is required." });
+        }
+
+        const request = await ServiceVehicleRequest.findByPk(id, {
+            include: [
+                {
+                    model: User,
+                    as: "RequestedByUser",
+                    attributes: ["id", "first_name", "last_name", "email", "username"],
+                }
+            ]
+        });
+        if (!request) {
+            return res.status(404).json({ success: false, message: "Service vehicle request not found." });
+        }
+
+        // Only requestor or super admin can cancel
+        if (req.user.id !== request.requested_by && req.user.role !== 'super_administrator') {
+            return res.status(403).json({ success: false, message: "You can only cancel your own requests." });
+        }
+
+        // Only submitted or department_approved requests may be cancelled
+        if (!['submitted', 'department_approved'].includes(request.status)) {
+            return res.status(400).json({
+                success: false,
+                message: `Cannot cancel a request with status '${request.status}'. Only submitted or approved requests can be cancelled.`
+            });
+        }
+
+        await request.update({
+            status: 'cancelled',
+            cancellation_reason: reason.trim()
+        });
+
+        // 1. Find ODHC Department Approver to notify
+        const odhcDepartment = await Department.findOne({
+            where: { is_vehicle_steward: true, is_active: true }
+        });
+        const odhcApprover = await User.findOne({
+            where: { department_id: odhcDepartment?.id || request.department_id, role: 'department_approver', is_active: true }
+        });
+
+        // 2. Format Requestor Data
+        const requestData = request.toJSON ? request.toJSON() : request;
+        const requestorData = requestData?.RequestedByUser ? {
+            ...requestData.RequestedByUser,
+            firstName: requestData.RequestedByUser.first_name,
+            lastName: requestData.RequestedByUser.last_name,
+            fullName: `${requestData.RequestedByUser.first_name} ${requestData.RequestedByUser.last_name}`
+        } : req.user;
+
+        // 3. Send Email
+        if (odhcApprover) {
+            try {
+                await emailService.notifyVehicleRequestCancelled(requestData, requestorData, odhcApprover, reason.trim());
+            } catch (emailError) {
+                console.error("Failed to send cancellation email notification:", emailError);
+            }
+        }
+
+        await logAudit({
+            req,
+            action: 'UPDATE',
+            entityType: 'ServiceVehicleRequest',
+            entityId: id,
+            details: { message: 'Request cancelled by requestor', reason: reason.trim() }
+        });
+
+        res.json({ success: true, message: "Request cancelled successfully.", request: requestData });
+    } catch (error) {
+        console.error("Error cancelling service vehicle request:", error);
+        res.status(500).json({ success: false, message: "Failed to cancel request", error: error.message });
+    }
+};
+
+
+
 export const assignVehicle = async (req, res) => {
     try {
         const { id } = req.params;
@@ -1476,61 +1569,7 @@ export const assignVehicle = async (req, res) => {
 
         request.assigned_vehicle = vehicleId;
 
-        // Check availability before assigning preventing double booking
-        if (assigned_driver || vehicleId) {
-            // Helper to normalize time to HH:mm:ss
-            const normalizeTime = (t) => {
-                if (!t) return null;
-                const match = t.match(/^(\d+):(\d+)(?::(\d+))?\s*(PM|AM)$/i);
-                if (match) {
-                    let [_, h, m, s, type] = match;
-                    let hours = parseInt(h, 10);
-                    if (type.toUpperCase() === 'PM' && hours < 12) hours += 12;
-                    if (type.toUpperCase() === 'AM' && hours === 12) hours = 0;
-                    return `${hours.toString().padStart(2, '0')}:${m}:${s || '00'}`;
-                }
-                return t;
-            };
-
-            const queryStartStr = `${request.travel_date_from}T${normalizeTime(request.pick_up_time) || '00:00:00'}`;
-            const queryEndStr = `${request.travel_date_to}T${normalizeTime(request.drop_off_time) || '23:59:59'}`;
-            const queryStart = new Date(queryStartStr);
-            const queryEnd = new Date(queryEndStr);
-
-            // Find conflicts (exclude current request, check active statuses)
-            const conflicts = await ServiceVehicleRequest.findAll({
-                where: {
-                    id: { [Op.ne]: id },
-                    status: { [Op.notIn]: ['draft', 'declined', 'cancelled'] },
-                    [Op.and]: [
-                        { travel_date_from: { [Op.lte]: request.travel_date_to } },
-                        { travel_date_to: { [Op.gte]: request.travel_date_from } }
-                    ]
-                }
-            });
-
-            // Refine with time check and resource match
-            const conflictingRequest = conflicts.find(c => {
-                const sameDriver = assigned_driver && c.assigned_driver && c.assigned_driver.toLowerCase() === assigned_driver.toLowerCase();
-                const sameVehicle = vehicleId && c.assigned_vehicle === vehicleId;
-
-                if (!sameDriver && !sameVehicle) return false;
-
-                const cStartStr = `${c.travel_date_from}T${normalizeTime(c.pick_up_time) || '00:00:00'}`;
-                const cEndStr = `${c.travel_date_to}T${normalizeTime(c.drop_off_time) || '23:59:59'}`;
-                const cStart = new Date(cStartStr);
-                const cEnd = new Date(cEndStr);
-
-                return queryStart < cEnd && queryEnd > cStart;
-            });
-
-            if (conflictingRequest) {
-                return res.status(409).json({
-                    success: false,
-                    message: `Conflict detected! The selected ${conflictingRequest.assigned_vehicle === vehicleId ? 'vehicle' : 'driver'} is already booked by Request #${conflictingRequest.reference_code || conflictingRequest.id} for this time slot.`
-                });
-            }
-        }
+        // Removed availability check as per user request to allow double booking
 
         request.assigned_driver = assigned_driver;
 
@@ -1540,6 +1579,20 @@ export const assignVehicle = async (req, res) => {
         }
 
         await request.save();
+
+        // Audit Log: Vehicle Assigned
+        await logAudit({
+            req,
+            action: 'UPDATE', // Using UPDATE as specific action might not be in enum or generic enough
+            entityType: 'ServiceVehicleRequest',
+            entityId: id,
+            details: {
+                message: 'Vehicle/Driver Assigned',
+                assignedVehicleId: vehicleId,
+                assignedDriver: assigned_driver,
+                approvalDate: req.body.approval_date || null
+            }
+        });
 
         res.json({
             success: true,
@@ -1624,41 +1677,50 @@ export const deleteRequest = async (req, res) => {
 
 export const getStats = async (req, res) => {
     try {
-        let whereClause = {};
+        let roleAccessClause = {};
 
         // Role-based filtering
         if (req.user.role === "requestor") {
-            whereClause.requested_by = req.user.id;
+            roleAccessClause.requested_by = req.user.id;
         } else if (req.user.role === "department_approver") {
-            // For vehicle requests, ODHC department approvers should see ALL requests
-            // (since all vehicle requests are routed to ODHC)
-            // Check if user is from ODHC department
+            // For vehicle requests, ODHC department approvers should see ALL non-draft requests
             const odhcDepartment = await Department.findOne({
                 where: {
-                    name: { [Op.iLike]: '%ODHC%' },
+                    is_vehicle_steward: true,
                     is_active: true,
                 },
             });
 
             if (odhcDepartment && req.user.department_id === odhcDepartment.id) {
-                // ODHC department approver can see all vehicle requests
-                // But should only see 'submitted' requests from their own department
-                // Other departments' 'submitted' requests are pending THEIR department approval
-                whereClause = {
-                    [Op.or]: [
-                        // Can see requests that have passed department approval (or finalized) from ANY department
-                        { status: ['department_approved', 'completed', 'returned', 'declined'] },
-                        // Can see 'submitted' requests ONLY from their own ODHC department
-                        {
-                            status: 'submitted',
-                            department_id: req.user.department_id
-                        }
-                    ]
+                // ODHC department approver can see all non-draft vehicle requests
+                roleAccessClause = {
+                    status: ['submitted', 'department_approved', 'completed', 'returned', 'declined']
                 };
             } else {
-                // Other department approvers can see requests from their department
-                whereClause.department_id = req.user.department_id;
+                // Non-ODHC department_approver (e.g. acting as temporary verifier):
+                // Do NOT grant department-wide access to stats.
+                // The Op.or clause below handles visibility via verifier_id only.
+                roleAccessClause = { requested_by: -1 }; // matches nothing — intentional
             }
+        } else {
+            roleAccessClause.requested_by = req.user.id;
+        }
+
+        // Construct final where clause combining role access and verifier access
+        let whereClause = {};
+        if (["it_manager", "super_administrator"].includes(req.user.role)) {
+            // Unrestricted access
+        } else {
+            // Restricted access: Role OR Assigned Verifier
+            whereClause = {
+                [Op.or]: [
+                    roleAccessClause,
+                    {
+                        verifier_id: req.user.id,
+                        verification_status: 'pending'
+                    }
+                ]
+            };
         }
 
         const stats = await ServiceVehicleRequest.findAll({
@@ -1999,12 +2061,12 @@ export const trackRequest = async (req, res) => {
                 'department_approved': { name: 'Department Approved', description: 'Approved by department approver' },
                 'completed': { name: 'Completed', description: 'Request has been completed' },
                 'declined': { name: 'Declined', description: 'Request has been declined' },
-                'returned': { name: 'Returned', description: 'Request returned for revision' }
+                'returned': { name: 'Returned', description: 'Request returned for revision' },
+                'cancelled': { name: 'Cancelled', description: 'Request has been cancelled' }
             };
 
             if (request.status !== 'submitted' && request.status !== 'draft') {
                 const statusInfo = statusMap[request.status] || { name: request.status, description: `Status: ${request.status}` };
-                // ... (truncated fallback logic to simplify)
                 timeline.push({
                     stage: request.status,
                     status: statusInfo.name,
@@ -2014,9 +2076,61 @@ export const trackRequest = async (req, res) => {
                     comments: null,
                     isPending: request.status === 'returned',
                     isCompleted: request.status === 'completed' || request.status === 'department_approved',
-                    isDeclined: request.status === 'declined'
+                    isDeclined: request.status === 'declined',
+                    isCancelled: request.status === 'cancelled'
                 });
             }
+        }
+
+        // ── Pending Verification step (always appended after workflow steps if verifier assigned) ──
+        const reqData = request.toJSON ? request.toJSON() : request;
+        const verificationStatus = reqData.verification_status || request.verification_status;
+        const verifierId = reqData.verifier_id || request.verifier_id;
+        const verifiedAt = reqData.verified_at || request.verified_at;
+        const verifierComments = reqData.verifier_comments || request.verifier_comments;
+
+        if (verifierId) {
+            const isVerifPending = verificationStatus === 'pending';
+            const isVerifDone = verificationStatus === 'verified';
+            const isVerifDeclined = verificationStatus === 'declined';
+
+            timeline.push({
+                stage: 'pending_verification',
+                status: isVerifDone
+                    ? 'Verified'
+                    : isVerifDeclined
+                        ? 'Verification Declined'
+                        : 'Pending Verification',
+                timestamp: isVerifPending ? null : (verifiedAt || reqData.updated_at),
+                completedBy: null,
+                description: isVerifDone
+                    ? 'Request has been verified by the assigned verifier'
+                    : isVerifDeclined
+                        ? 'Verification was declined by the assigned verifier'
+                        : 'Request is awaiting verification by the assigned verifier',
+                comments: verifierComments || null,
+                isPending: isVerifPending,
+                isCompleted: isVerifDone,
+                isDeclined: isVerifDeclined,
+                isCancelled: false
+            });
+        }
+
+        // ── Cancelled step ──
+        if (request.status === 'cancelled') {
+            const cancelData = request.toJSON ? request.toJSON() : request;
+            timeline.push({
+                stage: 'cancelled',
+                status: 'Cancelled',
+                timestamp: cancelData.updated_at || cancelData.created_at,
+                completedBy: null,
+                description: 'This request has been cancelled',
+                comments: cancelData.cancellation_reason || null,
+                isPending: false,
+                isCompleted: false,
+                isDeclined: false,
+                isCancelled: true
+            });
         }
 
         const requestType = request.request_type
@@ -2026,11 +2140,14 @@ export const trackRequest = async (req, res) => {
         const requestData = request.toJSON ? request.toJSON() : request;
         const createdAt = requestData.created_at || request.created_at || request.createdAt || requestData.createdAt;
 
+        const reqDataFinal = request.toJSON ? request.toJSON() : request;
+        const createdAtFinal = reqDataFinal.created_at || request.created_at || request.createdAt || reqDataFinal.createdAt;
+
         res.json({
             ticketCode: request.reference_code,
             requestType: 'vehicle',
             status: request.status,
-            submittedDate: createdAt,
+            submittedDate: createdAtFinal,
             submittedBy: request.RequestedByUser
                 ? `${request.RequestedByUser.first_name} ${request.RequestedByUser.last_name}`
                 : request.requestor_name || 'Unknown',
@@ -2065,7 +2182,7 @@ export const trackRequest = async (req, res) => {
 export const assignVerifier = async (req, res) => {
     try {
         const { id } = req.params;
-        const { verifier_id } = req.body;
+        const { verifier_id, reason } = req.body;
 
         // Check if user is ODHC Department Approver
         // This logic logic is simplified for now, assuming robust frontend checks too
@@ -2088,6 +2205,7 @@ export const assignVerifier = async (req, res) => {
         // Update Request
         await request.update({
             verifier_id,
+            verifier_reason: reason,
             verification_status: 'pending',
             verified_at: null, // Reset if reassigned
             verifier_comments: null

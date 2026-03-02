@@ -111,12 +111,23 @@ router.get('/active/:form_type', authenticateToken, async (req, res) => {
       });
     }
 
-    const workflow = await ApprovalWorkflow.findOne({
-      where: {
-        form_type,
-        is_active: true,
-        is_default: true
-      },
+    const { department_id } = req.query;
+
+    let whereClause = {
+      form_type,
+      is_active: true
+    };
+
+    // First try to find a department-specific workflow
+    if (department_id) {
+      whereClause.department_id = department_id;
+    } else {
+      whereClause.is_default = true;
+      whereClause.department_id = null;
+    }
+
+    let workflow = await ApprovalWorkflow.findOne({
+      where: whereClause,
       include: [
         {
           model: WorkflowStep,
@@ -140,10 +151,43 @@ router.get('/active/:form_type', authenticateToken, async (req, res) => {
       ]
     });
 
+    // If department-specific workflow not found, fallback to default global
+    if (!workflow && department_id) {
+      workflow = await ApprovalWorkflow.findOne({
+        where: {
+          form_type,
+          is_active: true,
+          is_default: true,
+          department_id: null
+        },
+        include: [
+          {
+            model: WorkflowStep,
+            as: 'Steps',
+            include: [
+              {
+                model: User,
+                as: 'ApproverUser',
+                attributes: ['id', 'first_name', 'last_name', 'email'],
+                required: false
+              },
+              {
+                model: Department,
+                as: 'ApproverDepartment',
+                attributes: ['id', 'name'],
+                required: false
+              }
+            ],
+            order: [['step_order', 'ASC']]
+          }
+        ]
+      });
+    }
+
     if (!workflow) {
       return res.status(404).json({
         success: false,
-        message: 'No active workflow found for this form type'
+        message: 'No active workflow found for this form type and department'
       });
     }
 
@@ -177,6 +221,12 @@ router.get('/', authenticateToken, requireRole(['super_administrator']), async (
     const workflows = await ApprovalWorkflow.findAll({
       where: whereClause,
       include: [
+        {
+          model: Department,
+          as: 'Department',
+          attributes: ['id', 'name'],
+          required: false
+        },
         {
           model: User,
           as: 'Creator',
@@ -235,6 +285,12 @@ router.get('/:id', authenticateToken, requireRole(['super_administrator']), asyn
 
     const workflow = await ApprovalWorkflow.findByPk(id, {
       include: [
+        {
+          model: Department,
+          as: 'Department',
+          attributes: ['id', 'name'],
+          required: false
+        },
         {
           model: User,
           as: 'Creator',
@@ -300,7 +356,7 @@ router.post(
     body('steps').isArray({ min: 1 }).withMessage('At least one workflow step is required'),
     body('steps.*.step_name').trim().isLength({ min: 1 }).withMessage('Step name is required'),
     body('steps.*.step_order').isInt({ min: 1 }).withMessage('Step order must be a positive integer'),
-    body('steps.*.approver_type').isIn(['role', 'user', 'department', 'department_approver']).withMessage('Invalid approver type'),
+    body('steps.*.approver_type').isIn(['role', 'user', 'department', 'department_approver', 'custom_matrix_role']).withMessage('Invalid approver type'),
     body('steps.*.status_on_approval').trim().isLength({ min: 1 }).withMessage('Status on approval is required')
   ],
   async (req, res) => {
@@ -314,22 +370,24 @@ router.post(
         });
       }
 
-      const { form_type, name, is_active = true, is_default = false, steps } = req.body;
+      const { form_type, name, is_active = true, is_default = false, department_id = null, steps } = req.body;
 
       // If setting as default, unset other defaults for this form type
-      if (is_default) {
+      // But only if it's a global default (department_id is null)
+      if (is_default && !department_id) {
         await ApprovalWorkflow.update(
           { is_default: false },
-          { where: { form_type, is_default: true } }
+          { where: { form_type, is_default: true, department_id: null } }
         );
       }
 
       // Create workflow
       const workflow = await ApprovalWorkflow.create({
         form_type,
+        department_id,
         name,
         is_active,
-        is_default,
+        is_default: department_id ? false : is_default, // Department workflows cannot be default global
         created_by: req.user.id,
         updated_by: req.user.id
       });
@@ -432,7 +490,7 @@ router.put(
       }
 
       const { id } = req.params;
-      const { name, is_active, is_default, steps } = req.body;
+      const { name, is_active, is_default, department_id, steps } = req.body;
 
       const workflow = await ApprovalWorkflow.findByPk(id);
       if (!workflow) {
@@ -443,10 +501,10 @@ router.put(
       }
 
       // If setting as default, unset other defaults for this form type
-      if (is_default && !workflow.is_default) {
+      if (is_default && !workflow.is_default && !workflow.department_id && !department_id) {
         await ApprovalWorkflow.update(
           { is_default: false },
-          { where: { form_type: workflow.form_type, is_default: true, id: { [Op.ne]: id } } }
+          { where: { form_type: workflow.form_type, is_default: true, department_id: null, id: { [Op.ne]: id } } }
         );
       }
 
@@ -456,12 +514,42 @@ router.put(
       };
       if (name !== undefined) updateData.name = name;
       if (is_active !== undefined) updateData.is_active = is_active;
-      if (is_default !== undefined) updateData.is_default = is_default;
+      if (department_id !== undefined) updateData.department_id = department_id;
+      // If a workflow gets assigned a department, it cannot be a global default
+      if (department_id) updateData.is_default = false;
+      else if (is_default !== undefined) updateData.is_default = is_default;
 
       await workflow.update(updateData);
 
       // Update steps if provided
       if (steps && Array.isArray(steps)) {
+        // Check if workflow is in use by active requests before modifying steps
+        if (workflow.form_type === 'item_request') {
+          const activeItemRequests = await Request.count({
+            where: {
+              status: { [Op.in]: ['submitted', 'department_approved', 'it_manager_approved', 'service_desk_processing'] }
+            }
+          });
+          if (activeItemRequests > 0) {
+            return res.status(400).json({
+              success: false,
+              message: 'Cannot modify workflow steps while there are active item requests. Please process all active requests first.'
+            });
+          }
+        } else if (workflow.form_type === 'vehicle_request') {
+          const activeVehicleRequests = await ServiceVehicleRequest.count({
+            where: {
+              status: { [Op.in]: ['submitted', 'returned', 'department_approved'] }
+            }
+          });
+          if (activeVehicleRequests > 0) {
+            return res.status(400).json({
+              success: false,
+              message: 'Cannot modify workflow steps while there are active vehicle requests. Please process all active requests first.'
+            });
+          }
+        }
+
         // Delete existing steps
         await WorkflowStep.destroy({ where: { workflow_id: id } });
 

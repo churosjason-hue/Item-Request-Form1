@@ -20,12 +20,12 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const token = localStorage.getItem('authToken');
     const userData = localStorage.getItem('user');
-    
+
     if (token && userData) {
       try {
         const parsedUser = JSON.parse(userData);
         setUser(parsedUser);
-        
+
         // Validate token with server
         authAPI.validateToken()
           .then(() => {
@@ -54,14 +54,14 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await authAPI.login(credentials);
       const { token, user: userData } = response.data;
-      
+
       // Store token and user data
       localStorage.setItem('authToken', token);
       localStorage.setItem('user', JSON.stringify(userData));
-      
+
       setUser(userData);
       return { success: true, user: userData };
     } catch (error) {
@@ -91,10 +91,10 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authAPI.refreshToken();
       const { token, user: userData } = response.data;
-      
+
       localStorage.setItem('authToken', token);
       localStorage.setItem('user', JSON.stringify(userData));
-      
+
       setUser(userData);
       return true;
     } catch (error) {
@@ -123,7 +123,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const canApproveAsITManager = () => {
-    return hasAnyRole(['it_manager', 'super_administrator']);
+    return hasAnyRole(['it_manager', 'endorser', 'super_administrator']);
   };
 
   const canProcessRequests = () => {
@@ -135,11 +135,15 @@ export const AuthProvider = ({ children }) => {
   };
 
   const canViewAllRequests = () => {
-    return hasAnyRole(['it_manager', 'service_desk', 'super_administrator']);
+    return hasAnyRole(['it_manager', 'endorser', 'service_desk', 'super_administrator']);
   };
 
   const canManageUsers = () => {
-    return hasAnyRole(['it_manager', 'super_administrator']);
+    return hasAnyRole(['it_manager', 'endorser', 'super_administrator']);
+  };
+
+  const canManageInventory = () => {
+    return hasAnyRole(['service_desk', 'super_administrator']);
   };
 
   const value = {
@@ -159,6 +163,7 @@ export const AuthProvider = ({ children }) => {
     isAdmin,
     canViewAllRequests,
     canManageUsers,
+    canManageInventory,
     // Computed properties
     isAuthenticated: !!user,
     userRole: user?.role,

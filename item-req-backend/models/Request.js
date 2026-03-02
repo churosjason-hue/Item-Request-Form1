@@ -68,9 +68,13 @@ const Request = sequelize.define('Request', {
       'submitted',
       'department_approved',
       'department_declined',
+      'checked_endorsed',
+      'endorser_declined',
       'it_manager_approved',
       'it_manager_declined',
       'service_desk_processing',
+      'pr_approved',
+      'ready_to_deploy',
       'completed',
       'cancelled',
       'returned'
@@ -147,6 +151,11 @@ Request.prototype.canBeEditedBy = function (user) {
     return true;
   }
 
+  // IT Manager can edit during their approval phase
+  if (user.role === 'it_manager' && this.status === 'department_approved') {
+    return true;
+  }
+
   return false;
 };
 
@@ -155,6 +164,8 @@ Request.prototype.canBeApprovedBy = function (user) {
     case 'submitted':
       return user.canApproveForDepartment(this.department_id);
     case 'department_approved':
+    case 'endorser_approved':
+    case 'checked_endorsed':
       return user.canApproveAsITManager();
     default:
       return false;
@@ -162,7 +173,7 @@ Request.prototype.canBeApprovedBy = function (user) {
 };
 
 Request.prototype.canBeProcessedBy = function (user) {
-  return (this.status === 'it_manager_approved' || this.status === 'service_desk_processing') && user.canProcessRequests();
+  return (this.status === 'it_manager_approved' || this.status === 'service_desk_processing' || this.status === 'pr_approved' || this.status === 'ready_to_deploy') && user.canProcessRequests();
 };
 
 Request.prototype.getNextStatus = function (action, userRole) {
@@ -182,6 +193,14 @@ Request.prototype.getNextStatus = function (action, userRole) {
       'complete': 'completed'
     },
     'service_desk_processing': {
+      'complete': 'completed'
+    },
+    'pr_approved': {
+      'approve': 'completed',
+      'complete': 'completed'
+    },
+    'ready_to_deploy': {
+      'approve': 'completed',
       'complete': 'completed'
     }
   };

@@ -1,4 +1,5 @@
 import Driver from '../models/Driver.js';
+import { logAudit, calculateChanges } from '../utils/auditLogger.js';
 
 // Get all drivers
 export const getAllDrivers = async (req, res) => {
@@ -18,11 +19,11 @@ export const getDriverById = async (req, res) => {
   try {
     const { id } = req.params;
     const driver = await Driver.findByPk(id);
-    
+
     if (!driver) {
       return res.status(404).json({ error: 'Driver not found' });
     }
-    
+
     res.json(driver);
   } catch (error) {
     console.error('Error fetching driver:', error);
@@ -34,7 +35,7 @@ export const getDriverById = async (req, res) => {
 export const createDriver = async (req, res) => {
   try {
     const { name, email, phone, license_number, license_expiration, status } = req.body;
-    
+
     // Validation
     if (!name || !license_number) {
       return res.status(400).json({ error: 'Name and license number are required' });
@@ -55,13 +56,24 @@ export const createDriver = async (req, res) => {
       status: status || 'active'
     });
 
+    await logAudit({
+      req,
+      action: 'CREATE',
+      entityType: 'Driver',
+      entityId: driver.id,
+      details: {
+        name,
+        license_number
+      }
+    });
+
     res.status(201).json({
       message: 'Driver created successfully',
       driver
     });
   } catch (error) {
     console.error('Error creating driver:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: error.message || 'Failed to create driver',
       message: error.message || 'Failed to create driver'
     });
@@ -87,6 +99,8 @@ export const updateDriver = async (req, res) => {
       }
     }
 
+    const oldData = driver.toJSON();
+
     // Update fields
     if (name !== undefined) driver.name = name;
     if (email !== undefined) driver.email = email || null;
@@ -97,13 +111,29 @@ export const updateDriver = async (req, res) => {
 
     await driver.save();
 
+    const newData = driver.toJSON();
+    const changes = calculateChanges(oldData, newData);
+
+    if (Object.keys(changes).length > 0) {
+      await logAudit({
+        req,
+        action: 'UPDATE',
+        entityType: 'Driver',
+        entityId: driver.id,
+        details: {
+          changes,
+          driverName: driver.name
+        }
+      });
+    }
+
     res.json({
       message: 'Driver updated successfully',
       driver
     });
   } catch (error) {
     console.error('Error updating driver:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: error.message || 'Failed to update driver',
       message: error.message || 'Failed to update driver'
     });
@@ -114,20 +144,33 @@ export const updateDriver = async (req, res) => {
 export const deleteDriver = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const driver = await Driver.findByPk(id);
     if (!driver) {
       return res.status(404).json({ error: 'Driver not found' });
     }
 
+    const driverDetails = {
+      name: driver.name,
+      license: driver.license_number
+    };
+
     await driver.destroy();
+
+    await logAudit({
+      req,
+      action: 'DELETE',
+      entityType: 'Driver',
+      entityId: id,
+      details: driverDetails
+    });
 
     res.json({
       message: 'Driver deleted successfully'
     });
   } catch (error) {
     console.error('Error deleting driver:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: error.message || 'Failed to delete driver',
       message: error.message || 'Failed to delete driver'
     });

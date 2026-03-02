@@ -7,18 +7,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Create uploads directory if it doesn't exist
-const uploadsDir = join(__dirname, '..', 'uploads', 'vehicle-requests');
+const uploadsDir = join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Configure storage
-const storage = multer.diskStorage({
+// Configure storage for item requests (saves to uploads/ root)
+const itemRequestStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    // Generate unique filename: timestamp-originalname
+    // Generate unique filename: timestamp-random-originalname
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
     cb(null, `${uniqueSuffix}-${sanitizedName}`);
@@ -56,9 +56,37 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Configure multer
+// Configure multer for item requests
+export const itemRequestUpload = multer({
+  storage: itemRequestStorage,
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit per file
+  }
+});
+
+// Create vehicle-requests subdirectory
+const vehicleRequestsDir = join(uploadsDir, 'vehicle-requests');
+if (!fs.existsSync(vehicleRequestsDir)) {
+  fs.mkdirSync(vehicleRequestsDir, { recursive: true });
+}
+
+// Configure storage for vehicle requests (saves to uploads/vehicle-requests/)
+const vehicleRequestStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, vehicleRequestsDir);
+  },
+  filename: (req, file, cb) => {
+    // Generate unique filename: timestamp-random-originalname
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+    cb(null, `${uniqueSuffix}-${sanitizedName}`);
+  }
+});
+
+// Configure multer for vehicle requests (default export for backward compatibility)
 const upload = multer({
-  storage: storage,
+  storage: vehicleRequestStorage,
   fileFilter: fileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB limit per file

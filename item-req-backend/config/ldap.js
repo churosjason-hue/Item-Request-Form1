@@ -22,7 +22,7 @@ class LDAPService {
         phone: process.env.LDAP_PHONE_ATTRIBUTE || 'telephoneNumber'
       }
     };
-    
+
     this.client = null;
   }
 
@@ -33,7 +33,7 @@ class LDAPService {
         timeout: 10000,
         connectTimeout: 10000
       });
-      
+
       await this.client.bind(this.config.bindDN, this.config.bindPassword);
       console.log('✅ LDAP connection established successfully');
       return true;
@@ -60,7 +60,7 @@ class LDAPService {
     try {
       let userDN;
       let userDetails;
-      
+
       // Try to find user by username first, then by email
       try {
         userDN = await this.findUserDN(usernameOrEmail);
@@ -71,7 +71,7 @@ class LDAPService {
         // Username search failed, try email
         console.log(`Username search failed, trying email for: ${usernameOrEmail}`);
       }
-      
+
       // If username search failed, try email
       if (!userDN) {
         try {
@@ -83,7 +83,7 @@ class LDAPService {
           console.log(`Email search also failed for: ${usernameOrEmail}`);
         }
       }
-      
+
       if (!userDN) {
         throw new Error('User not found in Active Directory');
       }
@@ -97,7 +97,7 @@ class LDAPService {
 
       await tempClient.bind(userDN, password);
       console.log(`✅ User ${usernameOrEmail} authenticated successfully`);
-      
+
       await tempClient.unbind();
       return userDetails;
     } catch (error) {
@@ -113,19 +113,51 @@ class LDAPService {
     }
   }
 
-  async findUserDN(username) {
+  // Helper to execute search with automatic retry on connection failure
+  async executeSearchWithRetry(searchBase, options) {
     try {
       if (!this.client) {
         await this.connect();
       }
 
+      try {
+        return await this.client.search(searchBase, options);
+      } catch (searchError) {
+        // Only retry on network/connection errors or lost bind state
+        const isConnectionError =
+          searchError.message.includes('closed') ||
+          searchError.message.includes('socket') ||
+          searchError.message.includes('ECONNRESET') ||
+          searchError.message.includes('Connection reset') ||
+          searchError.message.includes('bind must be completed') || // Fix for dropped bind session
+          searchError.message.includes('000004DC'); // Error code for bind requirement
+
+        if (isConnectionError) {
+          console.log('⚠️ LDAP search failed (connection/bind issue), retrying connection...');
+          await this.disconnect();
+          await this.connect();
+
+          // Retry search once
+          return await this.client.search(searchBase, options);
+        }
+        throw searchError;
+      }
+    } catch (error) {
+      // If we still fail, log and throw
+      console.error('LDAP Search Error:', error.message);
+      throw error;
+    }
+  }
+
+  async findUserDN(username) {
+    try {
       const searchOptions = {
         scope: 'sub',
         filter: `(${this.config.attributes.username}=${username})`,
         attributes: ['dn']
       };
 
-      const { searchEntries } = await this.client.search(
+      const { searchEntries } = await this.executeSearchWithRetry(
         this.config.userSearchBase,
         searchOptions
       );
@@ -143,17 +175,13 @@ class LDAPService {
 
   async findUserDNByEmail(email) {
     try {
-      if (!this.client) {
-        await this.connect();
-      }
-
       const searchOptions = {
         scope: 'sub',
         filter: `(${this.config.attributes.email}=${email})`,
         attributes: ['dn']
       };
 
-      const { searchEntries } = await this.client.search(
+      const { searchEntries } = await this.executeSearchWithRetry(
         this.config.userSearchBase,
         searchOptions
       );
@@ -171,10 +199,6 @@ class LDAPService {
 
   async getUserDetails(username) {
     try {
-      if (!this.client) {
-        await this.connect();
-      }
-
       const searchOptions = {
         scope: 'sub',
         filter: `(${this.config.attributes.username}=${username})`,
@@ -191,7 +215,7 @@ class LDAPService {
         ]
       };
 
-      const { searchEntries } = await this.client.search(
+      const { searchEntries } = await this.executeSearchWithRetry(
         this.config.userSearchBase,
         searchOptions
       );
@@ -201,7 +225,7 @@ class LDAPService {
       }
 
       const user = searchEntries[0];
-      
+
       // Helper function to safely extract string values from LDAP attributes
       const safeString = (value) => {
         if (!value) return '';
@@ -228,10 +252,6 @@ class LDAPService {
 
   async getUserDetailsByEmail(email) {
     try {
-      if (!this.client) {
-        await this.connect();
-      }
-
       const searchOptions = {
         scope: 'sub',
         filter: `(${this.config.attributes.email}=${email})`,
@@ -248,7 +268,7 @@ class LDAPService {
         ]
       };
 
-      const { searchEntries } = await this.client.search(
+      const { searchEntries } = await this.executeSearchWithRetry(
         this.config.userSearchBase,
         searchOptions
       );
@@ -258,7 +278,7 @@ class LDAPService {
       }
 
       const user = searchEntries[0];
-      
+
       // Helper function to safely extract string values from LDAP attributes
       const safeString = (value) => {
         if (!value) return '';
@@ -285,10 +305,6 @@ class LDAPService {
 
   async getAllUsers() {
     try {
-      if (!this.client) {
-        await this.connect();
-      }
-
       const searchOptions = {
         scope: 'sub',
         filter: process.env.LDAP_USER_FILTER || `(&(objectCategory=person)(objectClass=user)(|(sAMAccountName=*)(mail=*))(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`,
@@ -305,7 +321,7 @@ class LDAPService {
         ]
       };
 
-      const { searchEntries } = await this.client.search(
+      const { searchEntries } = await this.executeSearchWithRetry(
         this.config.userSearchBase,
         searchOptions
       );
@@ -343,16 +359,16 @@ class LDAPService {
       // Get departments from user Department attributes (not OUs)
       const departments = [];
       const departmentMap = new Map(); // To track by name and avoid duplicates
-      
+
       try {
         // Get all users and extract unique department values from their Department attribute
         const users = await this.getAllUsers();
-        
+
         users.forEach(user => {
           // Extract department from Department attribute only
           if (user.department && user.department.trim()) {
             const deptName = user.department.trim();
-            
+
             // Use name as key to avoid duplicates
             if (!departmentMap.has(deptName)) {
               departmentMap.set(deptName, {
@@ -385,17 +401,17 @@ class LDAPService {
 
   async testConnection() {
     try {
-      await this.connect();
-      
-      // Test basic search
-      const { searchEntries } = await this.client.search(this.config.baseDN, {
+      if (!this.client) {
+        await this.connect();
+      }
+
+      // Test basic search with retry
+      const { searchEntries } = await this.executeSearchWithRetry(this.config.baseDN, {
         scope: 'base',
         filter: '(objectClass=*)',
         attributes: ['dn']
       });
 
-      await this.disconnect();
-      
       return {
         success: true,
         message: 'LDAP connection test successful',
@@ -414,10 +430,6 @@ class LDAPService {
   // Find Organizational Unit DN by name
   async findOrganizationalUnitDN(ouName, parentDN = null) {
     try {
-      if (!this.client) {
-        await this.connect();
-      }
-
       const searchBase = parentDN || this.config.baseDN;
       const searchOptions = {
         scope: 'sub',
@@ -425,7 +437,7 @@ class LDAPService {
         attributes: ['dn', 'ou', 'description']
       };
 
-      const { searchEntries } = await this.client.search(searchBase, searchOptions);
+      const { searchEntries } = await this.executeSearchWithRetry(searchBase, searchOptions);
 
       if (searchEntries.length === 0) {
         return null;
@@ -458,7 +470,7 @@ class LDAPService {
 
       // Determine parent DN - use provided parent or base DN
       const parent = parentDN || this.config.baseDN;
-      
+
       // Construct the new OU DN
       const ouDN = `OU=${ouName},${parent}`;
 
@@ -476,7 +488,7 @@ class LDAPService {
       await this.client.add(ouDN, attributes);
 
       console.log(`✅ Created OU in AD: ${ouDN}`);
-      
+
       return {
         success: true,
         message: `Organizational Unit "${ouName}" created successfully`,
@@ -484,15 +496,15 @@ class LDAPService {
       };
     } catch (error) {
       console.error(`❌ Error creating OU "${ouName}":`, error.message);
-      
+
       // Check for permission errors
       const errorMessage = error.message || '';
-      const isPermissionError = errorMessage.includes('INSUFF_ACCESS_RIGHTS') || 
-                                errorMessage.includes('0x32') ||
-                                errorMessage.includes('Insufficient') ||
-                                errorMessage.includes('Access Rights') ||
-                                errorMessage.includes('access rights');
-      
+      const isPermissionError = errorMessage.includes('INSUFF_ACCESS_RIGHTS') ||
+        errorMessage.includes('0x32') ||
+        errorMessage.includes('Insufficient') ||
+        errorMessage.includes('Access Rights') ||
+        errorMessage.includes('access rights');
+
       if (isPermissionError) {
         const parentLocation = parentDN || this.config.baseDN;
         throw new Error(
@@ -502,7 +514,7 @@ class LDAPService {
           `Contact your Active Directory administrator to grant these permissions.`
         );
       }
-      
+
       throw new Error(`Failed to create OU in AD: ${error.message}`);
     }
   }
@@ -539,7 +551,7 @@ class LDAPService {
         // Rename the OU
         const newDN = `OU=${newName},${oldDN.substring(oldDN.indexOf(',') + 1)}`;
         await this.client.modifyDN(oldDN, newDN);
-        
+
         // Update oldDN for subsequent operations
         oldDN = newDN;
         changes.push(`Renamed to "${newName}"`);
@@ -564,7 +576,7 @@ class LDAPService {
       if (newParentDN && newParentDN !== oldDN.substring(oldDN.indexOf(',') + 1)) {
         const ouName = oldDN.split(',')[0].replace('OU=', '');
         const newDN = `OU=${ouName},${newParentDN}`;
-        
+
         // Check if OU with same name exists in new parent
         const existingDN = await this.findOrganizationalUnitDN(ouName, newParentDN);
         if (existingDN && existingDN !== oldDN) {
@@ -586,15 +598,15 @@ class LDAPService {
       };
     } catch (error) {
       console.error(`❌ Error updating OU:`, error.message);
-      
+
       // Check for permission errors
       const errorMessage = error.message || '';
-      const isPermissionError = errorMessage.includes('INSUFF_ACCESS_RIGHTS') || 
-                                errorMessage.includes('0x32') ||
-                                errorMessage.includes('Insufficient') ||
-                                errorMessage.includes('Access Rights') ||
-                                errorMessage.includes('access rights');
-      
+      const isPermissionError = errorMessage.includes('INSUFF_ACCESS_RIGHTS') ||
+        errorMessage.includes('0x32') ||
+        errorMessage.includes('Insufficient') ||
+        errorMessage.includes('Access Rights') ||
+        errorMessage.includes('access rights');
+
       if (isPermissionError) {
         throw new Error(
           `Permission denied: The LDAP service account does not have sufficient permissions to modify Organizational Units in Active Directory. ` +
@@ -602,7 +614,7 @@ class LDAPService {
           `Contact your Active Directory administrator to grant these permissions.`
         );
       }
-      
+
       throw new Error(`Failed to update OU in AD: ${error.message}`);
     }
   }
@@ -617,7 +629,7 @@ class LDAPService {
       // Extract OU from DN for logging
       const ouMatch = userDN.match(/OU=([^,]+)/i);
       const ouName = ouMatch ? ouMatch[1] : 'Unknown OU';
-      
+
       console.log(`🔄 Attempting to update ${attributeName} attribute for user in OU: ${ouName}`);
       console.log(`   User DN: ${userDN}`);
       console.log(`   New value: ${attributeValue}`);
@@ -632,9 +644,9 @@ class LDAPService {
       });
 
       await this.client.modify(userDN, [change]);
-      
+
       console.log(`✅ Successfully updated ${attributeName} attribute in AD for user in OU: ${ouName}`);
-      
+
       return {
         success: true,
         message: `Successfully updated ${attributeName} attribute in AD`
@@ -643,21 +655,21 @@ class LDAPService {
       // Extract OU from DN for error reporting
       const ouMatch = userDN.match(/OU=([^,]+)/i);
       const ouName = ouMatch ? ouMatch[1] : 'Unknown OU';
-      
+
       console.error(`❌ Error updating user attribute ${attributeName} for user in OU: ${ouName}`);
       console.error(`   User DN: ${userDN}`);
       console.error(`   Error: ${error.message}`);
       console.error(`   Error code: ${error.code || 'N/A'}`);
-      
+
       // Check for permission errors
-      if (error.message.includes('INSUFF_ACCESS_RIGHTS') || 
-          error.message.includes('0x32') || 
-          error.message.includes('insufficient access') ||
-          error.code === 50 || // LDAP_INSUFFICIENT_ACCESS
-          error.code === '0x32') {
+      if (error.message.includes('INSUFF_ACCESS_RIGHTS') ||
+        error.message.includes('0x32') ||
+        error.message.includes('insufficient access') ||
+        error.code === 50 || // LDAP_INSUFFICIENT_ACCESS
+        error.code === '0x32') {
         throw new Error(`Permission denied: Insufficient access rights to update ${attributeName} attribute for users in OU "${ouName}". Your LDAP service account (${this.config.bindDN}) needs write permissions on user objects in this OU.`);
       }
-      
+
       throw new Error(`Failed to update ${attributeName} attribute in AD for user in OU "${ouName}": ${error.message}`);
     }
   }
@@ -694,14 +706,14 @@ class LDAPService {
 
         if (children.length > 0) {
           console.log(`⚠️ OU "${searchEntries[0].ou}" has ${children.length} child object(s), deleting them first...`);
-          
+
           // Delete children first (in reverse order to handle nested structures)
           for (let i = children.length - 1; i >= 0; i--) {
             const childDN = children[i].dn;
-            const objectClass = Array.isArray(children[i].objectClass) 
-              ? children[i].objectClass[0] 
+            const objectClass = Array.isArray(children[i].objectClass)
+              ? children[i].objectClass[0]
               : children[i].objectClass;
-            
+
             try {
               // Recursively delete if it's an OU, otherwise just delete
               if (objectClass && objectClass.toLowerCase().includes('organizationalunit')) {
@@ -730,22 +742,22 @@ class LDAPService {
       await this.client.del(ouDN);
 
       console.log(`✅ Deleted OU from AD: ${ouDN}`);
-      
+
       return {
         success: true,
         message: `Organizational Unit "${searchEntries[0].ou}" deleted successfully from Active Directory`
       };
     } catch (error) {
       console.error(`❌ Error deleting OU:`, error.message);
-      
+
       // Check for permission errors
       const errorMessage = error.message || '';
-      const isPermissionError = errorMessage.includes('INSUFF_ACCESS_RIGHTS') || 
-                                errorMessage.includes('0x32') ||
-                                errorMessage.includes('Insufficient') ||
-                                errorMessage.includes('Access Rights') ||
-                                errorMessage.includes('access rights');
-      
+      const isPermissionError = errorMessage.includes('INSUFF_ACCESS_RIGHTS') ||
+        errorMessage.includes('0x32') ||
+        errorMessage.includes('Insufficient') ||
+        errorMessage.includes('Access Rights') ||
+        errorMessage.includes('access rights');
+
       if (isPermissionError) {
         throw new Error(
           `Permission denied: The LDAP service account does not have sufficient permissions to delete Organizational Units in Active Directory. ` +
@@ -754,7 +766,7 @@ class LDAPService {
         );
       }
 
-      
+
       throw new Error(`Failed to delete OU from AD: ${error.message}`);
     }
   }
@@ -780,7 +792,7 @@ class LDAPService {
     if (groupNames.some(group => group.includes('service desk') || group.includes('helpdesk'))) {
       return 'service_desk';
     }
-    
+
     // Default role
     return 'requestor';
   }

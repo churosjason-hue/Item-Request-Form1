@@ -7,10 +7,14 @@ import Approval from './Approval.js';
 import ServiceVehicleRequest from './ServiceVehicleRequest.js';
 import ApprovalWorkflow from './ApprovalWorkflow.js';
 import WorkflowStep from './WorkflowStep.js';
+import ApprovalMatrix from './ApprovalMatrix.js';
 import VehicleApproval from './VehicleApproval.js';
 import Vehicle from './Vehicle.js';
 import Driver from './Driver.js';
 import AuditLog from './AuditLog.js';
+import Item from './Item.js';
+import Category from './Category.js';
+import SystemSetting from './SystemSetting.js';
 
 // Define associations
 
@@ -152,6 +156,17 @@ User.hasMany(ApprovalWorkflow, {
   as: 'CreatedWorkflows'
 });
 
+// ApprovalWorkflow - Department associations
+ApprovalWorkflow.belongsTo(Department, {
+  foreignKey: 'department_id',
+  as: 'Department'
+});
+
+Department.hasMany(ApprovalWorkflow, {
+  foreignKey: 'department_id',
+  as: 'ApprovalWorkflows'
+});
+
 // ApprovalWorkflow - WorkflowStep associations
 ApprovalWorkflow.hasMany(WorkflowStep, {
   foreignKey: 'workflow_id',
@@ -174,6 +189,27 @@ WorkflowStep.belongsTo(User, {
 WorkflowStep.belongsTo(Department, {
   foreignKey: 'approver_department_id',
   as: 'ApproverDepartment'
+});
+
+// ApprovalMatrix associations
+ApprovalMatrix.belongsTo(Department, {
+  foreignKey: 'department_id',
+  as: 'Department'
+});
+
+Department.hasMany(ApprovalMatrix, {
+  foreignKey: 'department_id',
+  as: 'ApprovalMatrices'
+});
+
+ApprovalMatrix.belongsTo(User, {
+  foreignKey: 'user_id',
+  as: 'User'
+});
+
+User.hasMany(ApprovalMatrix, {
+  foreignKey: 'user_id',
+  as: 'ApprovalMatrices'
 });
 
 // ServiceVehicleRequest - VehicleApproval associations
@@ -221,10 +257,14 @@ export {
   ServiceVehicleRequest,
   ApprovalWorkflow,
   WorkflowStep,
+  ApprovalMatrix,
   VehicleApproval,
   Vehicle,
   Driver,
-  AuditLog
+  AuditLog,
+  Item,
+  Category,
+  SystemSetting
 };
 
 // Sync database function
@@ -270,6 +310,10 @@ export async function initializeDefaultData() {
     console.log('✅ Default departments initialized');
     // Initialize default workflows if they don't exist
     await initializeDefaultWorkflows();
+
+    // Initialize default categories
+    await initializeDefaultCategories();
+
     return { itDept, hrDept, financeDept };
   } catch (error) {
     console.error('❌ Failed to initialize default data:', error);
@@ -394,5 +438,32 @@ export async function initializeDefaultWorkflows() {
   } catch (error) {
     console.error('❌ Failed to initialize default workflows:', error);
     // Don't throw - allow system to continue even if workflows fail to initialize
+  }
+}
+
+// Initialize default categories
+export async function initializeDefaultCategories() {
+  try {
+    const count = await Category.count();
+    if (count === 0) {
+      console.log('📦 Seeding default categories...');
+      const categories = [
+        { name: 'Laptop', description: 'Portable computers', track_stock: true },
+        { name: 'Desktop', description: 'Desktop computers', track_stock: true },
+        { name: 'Monitor', description: 'Display monitors', track_stock: true },
+        { name: 'Keyboard', description: 'Keyboards', track_stock: true },
+        { name: 'Mouse', description: 'Mice', track_stock: true },
+        { name: 'UPS', description: 'Uninterruptible Power Supply', track_stock: true },
+        { name: 'Printer', description: 'Printers and scanners', track_stock: true },
+        { name: 'Software', description: 'Software and licenses', track_stock: false },
+        { name: 'Other Accessory', description: 'Miscellaneous accessories', track_stock: false },
+        { name: 'Other Equipment', description: 'Miscellaneous equipment', track_stock: false }
+      ];
+
+      await Category.bulkCreate(categories);
+      console.log('✅ Default categories seeded');
+    }
+  } catch (error) {
+    console.error('❌ Failed to seed default categories:', error);
   }
 }

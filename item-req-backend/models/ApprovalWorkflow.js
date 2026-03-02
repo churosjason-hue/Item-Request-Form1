@@ -12,6 +12,15 @@ const ApprovalWorkflow = sequelize.define('ApprovalWorkflow', {
     allowNull: false,
     comment: 'Type of form this workflow applies to'
   },
+  department_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'departments',
+      key: 'id'
+    },
+    comment: 'Optional department ID to make this a department-specific customized workflow'
+  },
   name: {
     type: DataTypes.STRING(200),
     allowNull: false,

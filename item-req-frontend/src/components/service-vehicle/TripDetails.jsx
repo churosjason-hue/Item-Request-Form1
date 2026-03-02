@@ -59,7 +59,7 @@ export default function TripDetails({
                     { name: "pick_up_time", label: "Pick-Up Time", type: "time", span: 1 },
                     { name: "drop_off_location", label: "Drop-Off Location", type: "text", span: 1 },
                     { name: "drop_off_time", label: "Drop-Off Time", type: "time", span: 1 },
-                    { name: "destination", label: "Destination", type: "text", span: 2 },
+                    { name: "destination", label: "Destination (Please specify the location in cases where multiple destinations are applicable.)", type: "text", span: 2 },
                     { name: "departure_time", label: "Departure Time", type: "time", span: 1 },
                 ],
                 showPassengers: true,
@@ -81,12 +81,12 @@ export default function TripDetails({
 
     return (
         <div className="space-y-4">
-            <div className="bg-gray-50 p-3 border border-gray-300">
-                <h3 className="text-xs font-bold text-gray-900 mb-3">
+            <div className="bg-gray-50 p-3 border border-gray-300 print:p-2">
+                <h3 className="text-xs font-bold text-gray-900 mb-3 print:mb-2">
                     {config.title}
                 </h3>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4 print:gap-3 print:mb-2 print:grid-cols-4">
                     {config.fields.map((field) => (
                         <div
                             key={field.name}
@@ -105,7 +105,7 @@ export default function TripDetails({
                                     value={formData[field.name] || ""}
                                     {...getInputProps({
                                         onChange: handleChange,
-                                        className: "w-full bg-transparent border-0 focus:outline-none text-sm",
+                                        className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 print:text-xs",
                                         disabled: loading,
                                     })}
                                 />

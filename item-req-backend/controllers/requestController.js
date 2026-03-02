@@ -1,19 +1,40 @@
 import { Op } from 'sequelize';
 import { validationResult } from 'express-validator';
-import { Request, RequestItem, Approval, User, Department, sequelize } from '../models/index.js';
+import { Request, RequestItem, Approval, User, Department, Category, AuditLog, sequelize } from '../models/index.js';
 import { processWorkflowOnSubmit, findCurrentStepForApprover, processWorkflowOnApproval, checkStepCompletion } from '../utils/workflowProcessor.js';
 import { logAudit, calculateChanges } from '../utils/auditLogger.js';
 import emailService from '../utils/emailService.js';
 
-// Generate request number
-export function generateRequestNumber() {
+// Generate sequential reference ID (ITR-MMDD-00001)
+export async function generateReferenceId() {
     const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const timestamp = now.getTime().toString().slice(-6);
+    // const year = String(now.getFullYear()).slice(-2); // YY - removed as per request
+    const month = String(now.getMonth() + 1).padStart(2, '0'); // MM
+    const day = String(now.getDate()).padStart(2, '0'); // DD
+    // Prefix format for current request: ITR-MMDD-
+    const currentPrefix = `ITR-${month}${day}-`;
 
-    return `REQ-${year}${month}${day}-${timestamp}`;
+    // Find last request globally (to keep sequence continuous)
+    const lastRequest = await Request.findOne({
+        where: {
+            request_number: {
+                [Op.like]: `ITR-%`
+            }
+        },
+        order: [['created_at', 'DESC']],
+        attributes: ['request_number']
+    });
+
+    let sequence = 1;
+    if (lastRequest && lastRequest.request_number) {
+        // Expected format: ITR-MMDD-XXXXX
+        const parts = lastRequest.request_number.split('-');
+        if (parts.length === 3) {
+            sequence = parseInt(parts[2], 10) + 1;
+        }
+    }
+
+    return `${currentPrefix}${String(sequence).padStart(5, '0')}`;
 }
 
 // Helper function to build order clause for sorting
@@ -66,8 +87,18 @@ export const getAllRequests = async (req, res) => {
             // Department approvers can see requests from their department (excluding drafts)
             whereClause.department_id = req.user.department_id;
             excludeDrafts = true;
-        } else if (['it_manager', 'service_desk', 'super_administrator'].includes(req.user.role)) {
-            // IT managers, service desk, and super admins can see all non-draft requests
+        } else if (req.user.role === 'it_manager') {
+            // IT Managers: Only see requests that have passed department approval (or are explicitly relevant)
+            // Unless specific status filter is used later, default to "IT Inbox" + "History"
+            if (!status) {
+                // Show everything except drafts and initial submissions (waiting for dept approval)
+                // This ensures we catch ALL intermediate statuses (like 'endorser_approved', 'verified', etc.)
+                whereClause.status = {
+                    [Op.notIn]: ['draft', 'submitted']
+                };
+            }
+        } else if (['service_desk', 'super_administrator'].includes(req.user.role)) {
+            // Service desk and super admins can see all non-draft requests
             excludeDrafts = true;
         }
 
@@ -256,7 +287,12 @@ export const getRequestById = async (req, res) => {
                     include: [{
                         model: User,
                         as: 'Approver',
-                        attributes: ['id', 'username', 'first_name', 'last_name', 'role', 'title']
+                        attributes: ['id', 'username', 'first_name', 'last_name', 'role', 'title'],
+                        include: [{
+                            model: Department,
+                            as: 'Department',
+                            attributes: ['id', 'name']
+                        }]
                     }]
                 }
             ]
@@ -282,6 +318,7 @@ export const getRequestById = async (req, res) => {
         const canAccess =
             req.user.role === 'super_administrator' ||
             req.user.role === 'it_manager' ||
+            req.user.role === 'endorser' ||
             req.user.role === 'service_desk' ||
             request.requestor_id === req.user.id ||
             (req.user.role === 'department_approver' && request.department_id === req.user.department_id);
@@ -336,7 +373,15 @@ export const getRequestById = async (req, res) => {
                     vendorInfo: item.vendor_info,
                     isReplacement: item.is_replacement,
                     replacedItemInfo: item.replaced_item_info,
-                    urgencyReason: item.urgency_reason
+                    urgencyReason: item.urgency_reason,
+                    isReturned: item.is_returned,
+                    returnedAt: item.returned_at,
+                    dateRequired: item.date_required,
+                    itRemarks: item.it_remarks,
+                    approvalStatus: item.approval_status,
+                    endorserStatus: item.endorser_status,
+                    endorserRemarks: item.endorser_remarks,
+                    original_quantity: item.original_quantity // Include original_quantity
                 })) || [],
                 approvals: request.Approvals?.map(approval => ({
                     id: approval.id,
@@ -347,7 +392,10 @@ export const getRequestById = async (req, res) => {
                         username: approval.Approver.username,
                         fullName: `${approval.Approver.first_name} ${approval.Approver.last_name}`,
                         role: approval.Approver.role,
-                        title: approval.Approver.title || ''
+                        title: approval.Approver.title || '',
+                        Department: approval.Approver.Department ? {
+                            name: approval.Approver.Department.name
+                        } : null
                     } : null,
                     comments: approval.comments,
                     approvedAt: approval.approved_at,
@@ -362,7 +410,17 @@ export const getRequestById = async (req, res) => {
                 })) || [],
                 permissions: (() => {
                     const canEdit = request.canBeEditedBy(req.user);
-                    const canApprove = request.canBeApprovedBy(req.user);
+
+                    // Enhanced canApprove check:
+                    // 1. Check dynamic workflow (pending_approver_ids)
+                    // 2. Fallback to static model logic (canBeApprovedBy)
+                    let canApprove = false;
+                    if (request.pending_approver_ids && request.pending_approver_ids.includes(req.user.id)) {
+                        canApprove = true;
+                    } else {
+                        canApprove = request.canBeApprovedBy(req.user);
+                    }
+
                     const canProcess = request.canBeProcessedBy(req.user);
 
                     // Debug logging
@@ -444,7 +502,7 @@ export const createRequest = async (req, res) => {
 
         // Create request
         const request = await Request.create({
-            request_number: generateRequestNumber(),
+            request_number: await generateReferenceId(),
             requestor_id: req.user.id,
             user_name: userName || `${req.user.first_name} ${req.user.last_name}`,
             user_position: userPosition || req.user.title,
@@ -472,7 +530,12 @@ export const createRequest = async (req, res) => {
                 vendor_info: item.vendorInfo || null,
                 is_replacement: item.isReplacement || false,
                 replaced_item_info: item.replacedItemInfo || null,
-                urgency_reason: item.urgencyReason || null
+                urgency_reason: item.urgencyReason || null,
+                priority: (item.priority && item.priority !== '') ? item.priority : (priority || 'medium'),
+                date_required: (item.dateRequired && item.dateRequired !== '') ? item.dateRequired : (dateRequired || null),
+                date_required: (item.dateRequired && item.dateRequired !== '') ? item.dateRequired : (dateRequired || null),
+                comments: item.comments || null,
+                it_remarks: item.itRemarks || null
             }))
         );
 
@@ -567,6 +630,9 @@ export const updateRequest = async (req, res) => {
         if (comments !== undefined) updateData.comments = comments;
         if (requestorSignature !== undefined) updateData.requestor_signature = requestorSignature || null;
 
+        // If IT Manager is editing, they shouldn't change the requestor signature or other fields ideally, 
+        // but current logic is permissive. We assume frontend controls what's sent.
+
         // Update items if provided
         if (items) {
             // Delete existing items
@@ -586,7 +652,10 @@ export const updateRequest = async (req, res) => {
                     vendor_info: item.vendorInfo || null,
                     is_replacement: item.isReplacement || false,
                     replaced_item_info: item.replacedItemInfo || null,
-                    urgency_reason: item.urgencyReason || null
+                    urgency_reason: item.urgencyReason || null,
+                    date_required: item.dateRequired || null,
+                    it_remarks: item.itRemarks || null,
+                    approval_status: item.approvalStatus || 'pending'
                 }))
             );
 
@@ -842,13 +911,14 @@ export const approveRequest = async (req, res) => {
         }
 
         const { id } = req.params;
-        const { comments, estimatedCompletionDate, processingNotes, signature } = req.body;
+        const { comments, estimatedCompletionDate, processingNotes, signature, items } = req.body;
 
         const request = await Request.findByPk(id, {
             include: [
                 { model: User, as: 'Requestor' },
                 { model: Department, as: 'Department' },
-                { model: Approval, as: 'Approvals' }
+                { model: Approval, as: 'Approvals' },
+                { model: RequestItem, as: 'Items' } // Include items to update them
             ]
         });
 
@@ -859,11 +929,62 @@ export const approveRequest = async (req, res) => {
             });
         }
 
-        if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user)) {
-            return res.status(403).json({
-                error: 'Access denied',
-                message: 'You do not have permission to approve this request'
-            });
+        // Update items if provided (e.g. Dept Approver verification or IT Manager remarks)
+        const changes = []; // Track detailed changes for audit log
+
+        if (items && Array.isArray(items)) {
+            // We only update specific fields relevant to approval actions to be safe:
+            // - approval_status (Dept Approver)
+            // - it_remarks (IT Manager)
+            // - comments (Additional notes)
+            // - We typically don't allow changing core item details (category, qty) during approval unless specifically needed.
+
+            // To refer to items accurately, we iterate existing items and update match by ID? 
+            // Or simpler: full replace like updateRequest? 
+            // Full replace is safer for UI consistency but risky if IDs change.
+            // Let's stick to update loop for existing items since we likely just want to update status/remarks.
+
+            // Let's stick to update loop for existing items since we likely just want to update status/remarks.
+
+            for (const itemData of items) {
+                // Find matching item by ID if possible, or fallback
+                // Assuming items in payload have IDs if they exist
+                if (itemData.id) {
+                    const itemToUpdate = request.Items.find(i => i.id === itemData.id);
+                    if (itemToUpdate) {
+                        const updates = {
+                            approval_status: itemData.approvalStatus || itemToUpdate.approval_status,
+                            it_remarks: itemData.itRemarks || itemToUpdate.it_remarks,
+                            endorser_status: itemData.endorserStatus || itemToUpdate.endorser_status,
+                            endorser_remarks: itemData.endorserRemarks || itemToUpdate.endorser_remarks
+                        };
+
+                        // Check for Quantity Change (IT Manager)
+                        if (itemData.quantity && parseInt(itemData.quantity) !== itemToUpdate.quantity) {
+                            const newQty = parseInt(itemData.quantity);
+                            console.log(`ℹ️ Qty change detected for Item ${itemToUpdate.id}: ${itemToUpdate.quantity} -> ${newQty}`);
+
+                            // If original_quantity is not set (null or undefined), this is the first edit.
+                            // Save the current DB value as original.
+                            if (itemToUpdate.original_quantity == null) {
+                                console.log(`ℹ️ Saving original quantity: ${itemToUpdate.quantity}`);
+                                updates.original_quantity = itemToUpdate.quantity;
+                                updates.original_quantity = itemToUpdate.quantity;
+                            } else {
+                                console.log(`ℹ️ Original quantity already set: ${itemToUpdate.original_quantity}`);
+                            }
+                            updates.quantity = newQty;
+                            changes.push(`Item '${itemToUpdate.category}' quantity changed from ${itemToUpdate.quantity} to ${newQty}`);
+                        }
+
+                        if (itemData.itRemarks && itemData.itRemarks !== itemToUpdate.it_remarks) {
+                            changes.push(`Item '${itemToUpdate.category}' remarks updated`);
+                        }
+
+                        await itemToUpdate.update(updates);
+                    }
+                }
+            }
         }
 
         // Dynamic Workflow Logic: Find current step
@@ -877,7 +998,7 @@ export const approveRequest = async (req, res) => {
             if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user)) {
                 return res.status(403).json({
                     error: 'Access denied',
-                    message: 'You do not have permission to approve this request (No workflow step matched)'
+                    message: 'You do not have permission to approve this request'
                 });
             }
         }
@@ -921,13 +1042,16 @@ export const approveRequest = async (req, res) => {
             if (request.status === 'submitted' && req.user.canApproveForDepartment(request.department_id)) {
                 approvalType = 'department_approval';
                 newStatus = 'department_approved';
-            } else if (request.status === 'department_approved' && req.user.canApproveAsITManager()) {
+            } else if (request.status === 'department_approved' && req.user.role === 'endorser') {
+                approvalType = 'endorser_approval';
+                newStatus = 'checked_endorsed';
+            } else if ((request.status === 'department_approved' || request.status === 'checked_endorsed') && req.user.canApproveAsITManager()) {
                 approvalType = 'it_manager_approval';
                 newStatus = 'it_manager_approved';
             } else if (request.status === 'it_manager_approved' && req.user.canProcessRequests()) {
                 approvalType = 'service_desk_processing';
                 newStatus = 'service_desk_processing';
-            } else if (request.status === 'service_desk_processing' && req.user.canProcessRequests()) {
+            } else if ((request.status === 'service_desk_processing' || request.status === 'pr_approved' || request.status === 'ready_to_deploy') && req.user.canProcessRequests()) {
                 approvalType = 'service_desk_processing';
                 newStatus = 'completed';
             } else {
@@ -983,6 +1107,69 @@ export const approveRequest = async (req, res) => {
         }
 
         if (isStepComplete) {
+            // Pre-flight check for STOCK REPLENISHMENT if completing
+            if (newStatus === 'completed') {
+                console.log('🔍 Checking stock availability before completion...');
+                const { replenishments } = req.body;
+                console.log('📦 Received Replenishments Payload:', JSON.stringify(replenishments, null, 2));
+
+                // We need to fetch items to check stock
+                const requestItems = await RequestItem.findAll({ where: { request_id: request.id } });
+
+                for (const item of requestItems) {
+                    if (item.approval_status === 'rejected') continue;
+
+                    const category = await Category.findOne({ where: { name: item.category } });
+                    if (category && category.track_stock) {
+                        // Check if we need replenishment
+                        if (category.quantity < item.quantity) {
+                            console.log(`⚠️ Low stock for ${category.name}: Stock ${category.quantity} < Requested ${item.quantity}`);
+
+                            // Debug ID matching
+                            const itemId = item.id;
+                            console.log(`🔎 Looking for replenishment for Item ID: ${itemId} (Type: ${typeof itemId})`);
+
+                            // Ensure replenishments object exists
+                            const safeReplenishments = replenishments || {};
+                            console.log(`📦 Available Replenishment Keys:`, Object.keys(safeReplenishments));
+
+                            // Try lookup with number and string key
+                            const replenishment = safeReplenishments[itemId] || safeReplenishments[String(itemId)];
+                            console.log(`✅ Found replenishment for ${itemId}:`, replenishment);
+
+                            if (!replenishment) {
+                                console.error(`❌ Missing replenishment for Item ID ${itemId}. content:`, safeReplenishments);
+                                throw new Error(`Insufficient stock for ${category.name} (Stock: ${category.quantity}, Requested: ${item.quantity}). Please provide replenishment details.`);
+                            }
+
+                            const { prNumber, addedQty } = replenishment;
+
+                            // Validate Replenishment
+                            if (!prNumber || !/^\d{8}$/.test(prNumber)) {
+                                throw new Error(`Invalid PR Number for ${category.name}. Must be 8 digits.`);
+                            }
+                            if (!addedQty || parseInt(addedQty) <= 0) {
+                                throw new Error(`Invalid Quantity for ${category.name}. Must be greater than 0.`);
+                            }
+
+                            // Apply Replenishment
+                            const supplyQty = parseInt(addedQty);
+                            const newStock = category.quantity + supplyQty;
+
+                            // Audit/Log the replenishment (Optional: create a separate log or note)
+                            console.log(`📦 Replenishing ${category.name}: ${category.quantity} + ${supplyQty} = ${newStock} (PR: ${prNumber})`);
+
+                            await category.update({
+                                quantity: newStock,
+                                stock_updated_at: new Date()
+                            });
+
+                            // Helper to log this specific action if needed
+                        }
+                    }
+                }
+            }
+
             // Update request status
             await request.update({
                 status: newStatus,
@@ -990,6 +1177,41 @@ export const approveRequest = async (req, res) => {
                 pending_approver_ids: request.pending_approver_ids,
                 ...(newStatus === 'completed' && { completed_at: new Date() })
             });
+
+            // Decrement Stock if Completed
+            if (newStatus === 'completed') {
+                console.log('📉 Decrementing stock for completed request:', request.id);
+                // Reload items just to be safe (though we have them if we didn't mutate)
+                const completedRequest = await Request.findByPk(request.id, {
+                    include: [{ model: RequestItem, as: 'Items' }]
+                });
+
+                if (completedRequest && completedRequest.Items) {
+                    for (const item of completedRequest.Items) {
+                        // Skip if item was rejected or cancelled
+                        if (item.approval_status === 'rejected') {
+                            console.log(`ℹ️ Skipping stock deduction for REJECTED item: ${item.category}`);
+                            continue;
+                        }
+
+                        try {
+                            const category = await Category.findOne({ where: { name: item.category } });
+                            if (category && category.track_stock) {
+                                let newQty = category.quantity - item.quantity;
+                                // Safety check for negative stock (though we tried to prevent it above)
+                                if (newQty < 0) {
+                                    console.warn(`⚠️ Stock went negative for ${category.name} after deduction!`);
+                                    newQty = 0;
+                                }
+                                await category.update({ quantity: newQty });
+                                console.log(`✅ Decremented ${item.quantity} from ${category.name}. New Qty: ${newQty}`);
+                            }
+                        } catch (stockError) {
+                            console.error(`❌ Failed to decrement stock for item ${item.category}:`, stockError);
+                        }
+                    }
+                }
+            }
 
             // Create next approval if needed
             if (nextStep && nextApprovers.length > 0) {
@@ -1016,6 +1238,12 @@ export const approveRequest = async (req, res) => {
                         }
                     });
                 }
+
+                // Update request with new pending approvers
+                await request.update({
+                    pending_approver_ids: nextApprovers.map(u => u.id),
+                    current_step_id: nextStep.id
+                });
             }
 
             // Reload request with approver info for email
@@ -1062,7 +1290,9 @@ export const approveRequest = async (req, res) => {
             details: {
                 newStatus,
                 comments,
-                approvalType
+                approvalType,
+                signatureUsed: !!signature, // Log if signature was provided
+                itemChanges: changes // Use the scoped variable
             }
         });
 
@@ -1106,7 +1336,7 @@ export const declineRequest = async (req, res) => {
             });
         }
 
-        if (!request.canBeApprovedBy(req.user)) {
+        if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user)) {
             return res.status(403).json({
                 error: 'Access denied',
                 message: 'You do not have permission to decline this request'
@@ -1124,7 +1354,7 @@ export const declineRequest = async (req, res) => {
 
         // Fallback: If no workflow step, check legacy logic permissions
         if (!currentStep) {
-            if (!request.canBeApprovedBy(req.user)) {
+            if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user)) {
                 return res.status(403).json({
                     error: 'Access denied',
                     message: 'You do not have permission to decline this request'
@@ -1254,7 +1484,7 @@ export const returnRequest = async (req, res) => {
             });
         }
 
-        if (!request.canBeApprovedBy(req.user)) {
+        if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user)) {
             return res.status(403).json({
                 error: 'Access denied',
                 message: 'You do not have permission to return this request'
@@ -1272,7 +1502,7 @@ export const returnRequest = async (req, res) => {
 
         // Fallback: If no workflow step, AND no legacy permission
         if (!currentStep) {
-            if (!request.canBeApprovedBy(req.user)) {
+            if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user)) {
                 return res.status(403).json({
                     error: 'Access denied',
                     message: 'You do not have permission to return this request'
@@ -1555,8 +1785,24 @@ export const getStats = async (req, res) => {
             total = Object.values(countsWithoutDraft).reduce((sum, count) => sum + count, 0);
         }
 
+        // Get dynamic "Pending My Approval" count
+        // This is much more robust than status checking
+        const pendingMyApproval = await Request.count({
+            where: {
+                pending_approver_ids: {
+                    [Op.contains]: [req.user.id]
+                },
+                status: {
+                    [Op.ne]: 'draft'
+                }
+            }
+        });
+
         res.json({
-            stats: statusCounts,
+            stats: {
+                ...statusCounts,
+                pendingMyApproval // Dynamic count
+            },
             total: total
         });
     } catch (error) {
@@ -1626,6 +1872,7 @@ export const trackRequest = async (req, res) => {
 
         const approvalStages = [
             'department_approval',
+            'endorser',
             'it_manager_approval',
             'service_desk_processing'
         ];
@@ -1678,6 +1925,17 @@ export const trackRequest = async (req, res) => {
                         description = 'Declined by department approver';
                     }
                     break;
+                case 'endorser':
+                case 'endorser_approval':
+                    stageName = 'Endorser Approval';
+                    if (!approval || approval.status === 'pending') {
+                        description = 'Waiting for endorser to review';
+                    } else if (approval.status === 'approved') {
+                        description = 'Checked and endorsed';
+                    } else if (approval.status === 'declined') {
+                        description = 'Declined by endorser';
+                    }
+                    break;
                 case 'it_manager_approval':
                     stageName = 'IT Manager Approval';
                     if (!approval || approval.status === 'pending') {
@@ -1690,16 +1948,15 @@ export const trackRequest = async (req, res) => {
                     break;
                 case 'service_desk_processing':
                     stageName = 'Service Desk Processing';
-                    if (!approval || approval.status === 'pending') {
+
+                    if (request.status === 'pr_approved') {
+                        stageName = 'Service Desk Processing (PR Approved)';
+                        description = 'PR has been approved. Request is being processed.';
+                    } else if (!approval || approval.status === 'pending') {
                         description = 'Waiting for Service Desk to process';
                     } else if (approval.status === 'approved') {
-                        // Only say "Completed" if request is actually completed
-                        // Otherwise, it's still being processed
-                        if (request.status === 'completed') {
-                            description = 'Completed by Service Desk';
-                        } else {
-                            description = 'Processing by Service Desk';
-                        }
+                        // Always say processing, as completion is now a separate "Deployed" step
+                        description = 'Processing by Service Desk';
                     } else if (approval.status === 'declined') {
                         description = 'Declined by Service Desk';
                     }
@@ -1714,10 +1971,15 @@ export const trackRequest = async (req, res) => {
             let isDeclined = approval && approval.status === 'declined';
 
             // Special handling for Service Desk Processing step
-            if (stage === 'service_desk_processing' && isApproved && request.status !== 'completed') {
-                // Approval exists but request is not completed yet - this is the first approval
-                // Mark as pending/in-progress, not completed
-                isApproved = false;
+            // Mark as completed if request has moved to ready_to_deploy, pr_approved, or completed
+            if (stage === 'service_desk_processing') {
+                if (['ready_to_deploy', 'pr_approved', 'completed'].includes(request.status)) {
+                    // Service Desk has processed the request and moved it forward
+                    isApproved = true;
+                } else if (isApproved && request.status !== 'completed') {
+                    // Approval exists but request hasn't moved forward yet
+                    isApproved = false;
+                }
             }
 
             const isPending = !isApproved && !isDeclined;
@@ -1735,6 +1997,16 @@ export const trackRequest = async (req, res) => {
             } else if (isApproved || isDeclined) {
                 // Fallback to updated_at if specific timestamp not available
                 approvalTimestamp = approval.updated_at;
+            }
+
+            // Special handling for Service Desk Processing timestamp
+            // Use START time (created_at) instead of completion time so it appears before Deployed
+            if (stage === 'service_desk_processing' && isApproved) {
+                approvalTimestamp = approval.created_at || approval.createdAt;
+                // Also update description to be clearer
+                if (description === 'Processing by Service Desk') {
+                    description = 'Processing started by Service Desk';
+                }
             }
 
             timeline.push({
@@ -1757,13 +2029,97 @@ export const trackRequest = async (req, res) => {
 
             console.log(`✅ Stage ${stage}: isPending=${isPending}, isCompleted=${isApproved}, isDeclined=${isDeclined}`);
 
-            // If declined, mark flag and break to stop adding further stages
             if (isDeclined) {
                 hasBeenDeclined = true;
                 console.log(`🛑 Stage ${stage} was declined - stopping timeline here`);
                 break;
             }
         }
+
+        // 3. Post-Processing Stages (PR Approval & Deployment/Completion)
+        // These don't always have explicit 'approval' records in the approvals array if they are just status transitions
+        // so we add them based on the request status.
+
+        // Fetch Audit Logs for this request to get precise timestamps
+        // We do this here to avoid N+1 queries if we were doing it inside loops, though we only need it for the timeline
+        const requestAuditLogs = await AuditLog.findAll({
+            where: {
+                entity_type: 'Request', // Ensure this matches what is stored (might be 'Request' or 'item_request' - check saving logic or use both)
+                entity_id: String(request.id)
+            },
+            attributes: ['action', 'created_at', 'details']
+        });
+
+        // Helper to find log timestamp with flexible filtering
+        const getLogTimestamp = (filterFn) => {
+            const log = requestAuditLogs
+                .filter(filterFn)
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]; // Get latest
+            return log ? log.created_at : null;
+        };
+
+        // START: PR Approved Event - ONLY show if request actually went through pr_approved status
+        // Check audit logs to see if pr_approved was ever set
+        const prTimestamp = getLogTimestamp(l =>
+            (l.action === 'APPROVE_PR') || // Legacy/Invalid attempt
+            (l.action === 'APPROVE' && l.details && (l.details.newStatus === 'pr_approved' || l.details.approvalType === 'pr_approval'))
+        );
+
+        if (!hasBeenDeclined && prTimestamp) {
+            // Only add PR Approved to timeline if we have actual evidence it happened
+            timeline.push({
+                stage: 'pr_approved',
+                status: 'PR Approved',
+                timestamp: prTimestamp,
+                completedBy: null,
+                description: 'Purchase Request approved',
+                isPending: false,
+                isCompleted: true,
+                isDeclined: false
+            });
+        }
+        // END: PR Approved Event
+
+        // START: Ready to Deploy Event (In Stock Workflow) - ONLY show if request actually went through ready_to_deploy status
+        // Check audit logs to see if ready_to_deploy was ever set
+        const readyToDeployTimestamp = getLogTimestamp(l =>
+            l.action === 'APPROVE' && l.details && (l.details.newStatus === 'ready_to_deploy' || l.details.approvalType === 'ready_to_deploy')
+        );
+
+        if (!hasBeenDeclined && readyToDeployTimestamp) {
+            // Only add Ready to Deploy to timeline if we have actual evidence it happened
+            timeline.push({
+                stage: 'ready_to_deploy',
+                status: 'Ready to Deploy',
+                timestamp: readyToDeployTimestamp,
+                completedBy: null,
+                description: 'All items are in stock and ready for deployment',
+                isPending: false,
+                isCompleted: true,
+                isDeclined: false
+            });
+        }
+        // END: Ready to Deploy Event
+
+        // START: Deployed / Completed Event
+        if (!hasBeenDeclined && request.status === 'completed') {
+            // Find 'APPROVE' action where newStatus was 'completed'
+            const completionTimestamp = getLogTimestamp(l =>
+                l.action === 'APPROVE' && l.details && l.details.newStatus === 'completed'
+            ) || request.updated_at || request.updatedAt || request.createdAt;
+
+            timeline.push({
+                stage: 'deployed',
+                status: 'Deployed',
+                timestamp: completionTimestamp,
+                completedBy: null,
+                description: 'Items deployed and request completed',
+                isPending: false,
+                isCompleted: true,
+                isDeclined: false
+            });
+        }
+        // END: Deployed Event
 
         // Ensure submittedDate is always available (use created_at or timeline first entry)
         // Use the same extraction logic as timeline
@@ -1793,5 +2149,443 @@ export const trackRequest = async (req, res) => {
             error: 'Failed to track request',
             message: error.message
         });
+    }
+};
+
+// Restock item (Return to Inventory)
+export const restockItem = async (req, res) => {
+    try {
+        const { id, itemId } = req.params;
+
+        // Verify permissions (only Service Desk or Admin)
+        if (!req.user.canProcessRequests()) {
+            return res.status(403).json({
+                error: 'Access denied',
+                message: 'Only Service Desk or Admins can restock items'
+            });
+        }
+
+        const request = await Request.findByPk(id);
+        if (!request) {
+            return res.status(404).json({ error: 'Request not found' });
+        }
+
+        const item = await RequestItem.findOne({
+            where: {
+                id: itemId,
+                request_id: id
+            }
+        });
+
+        if (!item) {
+            return res.status(404).json({ error: 'Item not found in this request' });
+        }
+
+        if (item.is_returned) {
+            return res.status(400).json({ error: 'Item is already returned to inventory' });
+        }
+
+        // Find Category and Increment Stock
+        const category = await Category.findOne({ where: { name: item.category } });
+
+        let stockMessage = '';
+        if (category && category.track_stock) {
+            const newQty = category.quantity + item.quantity;
+            await category.update({ quantity: newQty });
+            stockMessage = `Stock updated for ${category.name}: ${category.quantity} -> ${newQty}`;
+        } else {
+            stockMessage = 'Category not tracked or not found - Stock not updated';
+        }
+
+        // Mark Item as Returned
+        await item.update({
+            is_returned: true,
+            returned_at: new Date()
+        });
+
+        // Audit Log
+        await logAudit({
+            req,
+            action: 'RESTOCK',
+            entityType: 'RequestItem',
+            entityId: item.id,
+            details: {
+                requestNumber: request.request_number,
+                itemCategory: item.category,
+                quantity: item.quantity,
+                stockUpdate: stockMessage
+            }
+        });
+
+        res.json({
+            message: 'Item returned to inventory successfully',
+            item: {
+                id: item.id,
+                is_returned: true,
+                returned_at: item.returned_at
+            }
+        });
+
+    } catch (error) {
+        console.error('Error restocking item:', error);
+        res.status(500).json({
+            error: 'Failed to restock item',
+            message: error.message
+        });
+    }
+};
+
+// Delete Request Item (Service Desk)
+export const deleteRequestItem = async (req, res) => {
+    try {
+        const { id, itemId } = req.params;
+
+        // Verify permissions (only Service Desk or Admin)
+        // Request.canProcessRequests logic might need to be checked or duplicated if not available on req.user directly here properly, 
+        // but assuming it works as per previous code.
+        // Actually, let's stick to safe role check if canProcessRequests isn't guaranteed on req.user object in this context (it should be if middleware sets it, but simple role check is safer).
+        if (!['service_desk', 'super_administrator'].includes(req.user.role)) {
+            return res.status(403).json({
+                error: 'Access denied',
+                message: 'Only Service Desk or Admins can delete request items'
+            });
+        }
+
+        const item = await RequestItem.findOne({
+            where: {
+                id: itemId,
+                request_id: id
+            }
+        });
+
+        if (!item) {
+            return res.status(404).json({ error: 'Item not found' });
+        }
+
+        // Audit Log
+        const request = await Request.findByPk(id);
+        await logAudit({
+            req,
+            action: 'DELETE_ITEM',
+            entityType: 'RequestItem',
+            entityId: item.id,
+            details: {
+                requestNumber: request ? request.request_number : 'Unknown',
+                itemCategory: item.category,
+                reason: 'Deleted from deployed assets'
+            }
+        });
+
+        await item.destroy();
+
+        res.json({ message: 'Item deleted successfully' });
+
+    } catch (error) {
+        console.error('Error deleting request item:', error);
+        res.status(500).json({
+            error: 'Failed to delete item',
+            message: error.message
+        });
+    }
+};
+
+// Upload attachment
+export const uploadAttachments = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const request = await Request.findByPk(id);
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: 'Request not found' });
+        }
+
+        // Check permissions (Requestor or Service Desk/Admin)
+        // Requestors can only upload if draft or returned
+        // Approvers/Service Desk can upload if processing
+
+        let canUpload = false;
+        if (req.user.id === request.requestor_id) {
+            if (['draft', 'returned'].includes(request.status)) canUpload = true;
+        } else if (['service_desk', 'super_administrator'].includes(req.user.role)) {
+            // Service desk can upload anytime (e.g. attaching quotes, PRs)
+            canUpload = true;
+        } else if (req.user.role === 'department_approver' && request.department_id === req.user.department_id) {
+            // Department approver might want to attach something? Maybe not for now, stick to requirements.
+            // But existing code for vehicle requests allows approvers. Let's allow service desk specifically.
+        }
+
+        if (!canUpload) {
+            return res.status(403).json({ success: false, message: 'Permission denied or invalid status for upload' });
+        }
+
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ success: false, message: 'No files uploaded' });
+        }
+
+        const newAttachments = req.files.map(file => ({
+            originalName: file.originalname,
+            filename: file.filename,
+            path: `/uploads/${file.filename}`,
+            mimetype: file.mimetype,
+            size: file.size,
+            uploadedAt: new Date(),
+            uploadedBy: {
+                id: req.user.id,
+                name: `${req.user.first_name} ${req.user.last_name}`
+            }
+        }));
+
+        // Append to existing attachments
+        const existingAttachments = request.attachments || [];
+        const updatedAttachments = [...existingAttachments, ...newAttachments];
+
+        await request.update({ attachments: updatedAttachments });
+
+        await logAudit({
+            req,
+            action: 'UPDATE',
+            entityType: 'Request',
+            entityId: id,
+            details: { message: `Uploaded ${newAttachments.length} attachment(s)` }
+        });
+
+        res.json({
+            success: true,
+            message: 'Attachments uploaded successfully',
+            attachments: updatedAttachments
+        });
+    } catch (error) {
+        console.error('Error uploading attachments:', error);
+        res.status(500).json({ success: false, message: 'Failed to upload attachments', error: error.message });
+    }
+};
+
+// Delete attachment
+export const deleteAttachment = async (req, res) => {
+    try {
+        const { id, index } = req.params;
+        const request = await Request.findByPk(id);
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: 'Request not found' });
+        }
+
+        // Check permissions
+        const canDelete = req.user.id === request.requestor_id || ['service_desk', 'super_administrator'].includes(req.user.role);
+        if (!canDelete) {
+            return res.status(403).json({ success: false, message: 'Permission denied' });
+        }
+
+        const attachments = request.attachments || [];
+        const attachmentIndex = parseInt(index);
+
+        if (isNaN(attachmentIndex) || attachmentIndex < 0 || attachmentIndex >= attachments.length) {
+            return res.status(400).json({ success: false, message: 'Invalid attachment index' });
+        }
+
+        const deletedAttachment = attachments[attachmentIndex];
+
+        // Remove from array
+        const updatedAttachments = attachments.filter((_, i) => i !== attachmentIndex);
+
+        await request.update({ attachments: updatedAttachments });
+
+        await logAudit({
+            req,
+            action: 'UPDATE',
+            entityType: 'Request',
+            entityId: id,
+            details: { message: `Deleted attachment: ${deletedAttachment.originalName}` }
+        });
+
+        res.json({
+            success: true,
+            message: 'Attachment deleted successfully',
+            attachments: updatedAttachments
+        });
+    } catch (error) {
+        console.error('Error deleting attachment:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete attachment', error: error.message });
+    }
+};
+
+// Approve PR
+export const approvePR = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { replenishments } = req.body; // Expect replenishments here
+
+        console.log(`[${new Date().toISOString()}] Received Payload: ${JSON.stringify(req.body)}`);
+
+        // Ensure user is service desk or admin
+        if (!['service_desk', 'super_administrator'].includes(req.user.role)) {
+            return res.status(403).json({ success: false, message: 'Only Service Desk can approve PRs' });
+        }
+
+        const request = await Request.findByPk(id);
+        if (!request) {
+            return res.status(404).json({ success: false, message: 'Request not found' });
+        }
+
+        // Validate attachments exist
+        if (!request.attachments || request.attachments.length === 0) {
+            return res.status(400).json({ success: false, message: 'Cannot approve PR without attachments (e.g. PR document)' });
+        }
+
+        // Validate status - PR can only be approved when in service_desk_processing
+        if (request.status !== 'service_desk_processing') {
+            return res.status(400).json({
+                success: false,
+                message: 'PR can only be approved when request is in Service Desk Processing status. Please approve the request first.'
+            });
+        }
+
+        // --- Replenishment Logic ---
+        if (replenishments) {
+            console.log('📦 Processing Replenishments for PR Approval:', JSON.stringify(replenishments));
+
+            // Fetch items to match
+            const requestItems = await RequestItem.findAll({ where: { request_id: request.id } });
+
+            for (const item of requestItems) {
+                if (item.approval_status === 'rejected') continue;
+
+                // Lookup replenishment data (robust key check)
+                const itemId = item.id;
+                const replenishment = replenishments[itemId] || replenishments[String(itemId)];
+
+                if (replenishment) {
+                    const category = await Category.findOne({ where: { name: item.category } });
+                    if (category && category.track_stock) {
+                        const { prNumber, addedQty } = replenishment;
+
+                        // Validate
+                        if (!prNumber || !/^\d{8}$/.test(prNumber)) {
+                            throw new Error(`Invalid PR Number for ${category.name}. Must be 8 digits.`);
+                        }
+                        if (!addedQty || parseInt(addedQty) <= 0) {
+                            throw new Error(`Invalid Quantity for ${category.name}. Must be greater than 0.`);
+                        }
+
+                        // Update Stock
+                        const supplyQty = parseInt(addedQty);
+                        const newStock = category.quantity + supplyQty;
+
+                        await category.update({
+                            quantity: newStock,
+                            stock_updated_at: new Date()
+                        });
+
+                        console.log(`✅ Stock Replenished for ${category.name}: +${supplyQty} -> ${newStock} (PR: ${prNumber})`);
+
+                        // Log specific replenishment action
+                        await logAudit({
+                            req,
+                            action: 'RESTOCK', // Using RESTOCK or UPDATE
+                            entityType: 'Category',
+                            entityId: category.id,
+                            details: {
+                                message: `Stock replenished via PR Approval`,
+                                addedQty: supplyQty,
+                                prNumber: prNumber,
+                                newTotal: newStock
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        // ---------------------------
+
+        // Update status and clear workflow step to allow completion
+        const oldStatus = request.status;
+        await request.update({
+            status: 'pr_approved',
+            current_step_id: null,
+            pending_approver_ids: []
+        });
+
+        await logAudit({
+            req,
+            action: 'APPROVE', // Use standard enum value
+            entityType: 'Request',
+            entityId: id,
+            details: {
+                previousStatus: oldStatus,
+                newStatus: 'pr_approved',
+                approvalType: 'pr_approval' // Distinct marker for timeline
+            }
+        });
+
+        res.json({
+            success: true,
+            message: 'PR Approved and Stock Replenished successfully',
+            request: {
+                id: request.id,
+                status: 'pr_approved'
+            }
+        });
+
+    } catch (error) {
+        console.error('Error approving PR:', error);
+        res.status(500).json({ success: false, message: 'Failed to approve PR', error: error.message });
+    }
+};
+
+// Ready to Deploy (In Stock Workflow)
+export const readyToDeploy = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Ensure user is service desk or admin
+        if (!['service_desk', 'super_administrator'].includes(req.user.role)) {
+            return res.status(403).json({ success: false, message: 'Only Service Desk can mark requests as Ready to Deploy' });
+        }
+
+        const request = await Request.findByPk(id);
+        if (!request) {
+            return res.status(404).json({ success: false, message: 'Request not found' });
+        }
+
+        // Validate status - Can transition from it_manager_approved or service_desk_processing (if mistaken)
+        if (!['it_manager_approved', 'service_desk_processing'].includes(request.status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Request must be IT Manager Approved or Processing to be marked as Ready to Deploy.'
+            });
+        }
+
+        // Update status and clear workflow step to allow completion
+        const oldStatus = request.status;
+        await request.update({
+            status: 'ready_to_deploy',
+            current_step_id: null,
+            pending_approver_ids: []
+        });
+
+        await logAudit({
+            req,
+            action: 'APPROVE',
+            entityType: 'Request',
+            entityId: id,
+            details: {
+                previousStatus: oldStatus,
+                newStatus: 'ready_to_deploy',
+                approvalType: 'ready_to_deploy'
+            }
+        });
+
+        res.json({
+            success: true,
+            message: 'Request marked as Ready to Deploy',
+            request: {
+                id: request.id,
+                status: 'ready_to_deploy'
+            }
+        });
+
+    } catch (error) {
+        console.error('Error marking as Ready to Deploy:', error);
+        res.status(500).json({ success: false, message: 'Failed to update request status', error: error.message });
     }
 };

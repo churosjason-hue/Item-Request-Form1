@@ -27,6 +27,7 @@ import {
   approveRequest,
   declineRequest,
   returnRequest,
+  cancelRequest,
   assignVehicle,
   deleteRequest,
   getStats,
@@ -544,5 +545,8 @@ router.post("/:id/assign-verifier", authenticateToken, assignVerifier);
 
 // Verify Request (Verifier Action)
 router.post("/:id/verify", authenticateToken, verifyRequest);
+
+// Cancel Request (Requestor)
+router.put("/:id/cancel", authenticateToken, cancelRequest);
 
 export default router;

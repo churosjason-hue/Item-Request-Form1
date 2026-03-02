@@ -134,10 +134,25 @@ export const validateServiceVehicleForm = (formData) => {
       errors.destination_car = "Destination/Car use is required";
     }
 
-    if (!formData.has_valid_license) {
+    if (formData.has_valid_license === "" || formData.has_valid_license === null || formData.has_valid_license === undefined) {
       errors.has_valid_license = "Please confirm if you have a valid license";
-    } else if (formData.has_valid_license === "false") {
-      errors.has_valid_license = "A valid driver's license is required for Car Only requests";
+    }
+
+    if (!formData.driver_name?.trim()) {
+      errors.driver_name = "Driver's Name is required";
+    }
+
+    if (!formData.license_number?.trim()) {
+      errors.license_number = "License number is required";
+    }
+
+    if (!formData.expiration_date) {
+      errors.expiration_date = "License expiration date is required";
+    } else {
+      const expirationDate = new Date(formData.expiration_date);
+      if (expirationDate < new Date()) {
+        errors.expiration_date = "License has expired";
+      }
     }
   }
 
@@ -151,21 +166,6 @@ export const validateServiceVehicleForm = (formData) => {
       );
       if (invalidPassengers.length > 0) {
         errors.passengers = "All passengers must have a name";
-      }
-    }
-  }
-
-  // License validation
-  if (formData.has_valid_license === "true") {
-    if (!formData.license_number?.trim()) {
-      errors.license_number = "License number is required";
-    }
-    if (!formData.expiration_date) {
-      errors.expiration_date = "License expiration date is required";
-    } else {
-      const expirationDate = new Date(formData.expiration_date);
-      if (expirationDate < new Date()) {
-        errors.expiration_date = "License has expired";
       }
     }
   }

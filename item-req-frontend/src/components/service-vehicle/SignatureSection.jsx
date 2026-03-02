@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { PenTool } from 'lucide-react';
-import SignatureModal from '../SignatureModal';
+import SignatureModal from '../common/SignatureModal';
 
 export default function SignatureSection({
     formData,
@@ -28,13 +28,13 @@ export default function SignatureSection({
 
     return (
         <>
-            <div className="border border-gray-400 p-4 mb-6 print:break-inside-avoid">
-                <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400">
+            <div className="border border-gray-400 p-4 mb-6 print:mb-3 print:p-2 print:break-inside-avoid">
+                <div className="bg-gray-100 -m-4 mb-4 px-4 py-2 border-b border-gray-400 print:-m-2 print:mb-2 print:px-2 print:py-1">
                     <h2 className="text-sm font-bold text-gray-900 uppercase">
-                        Section 3: Requestor Signature
+                        Requestor Signature
                     </h2>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 gap-6 print:grid-cols-1 print:gap-2">
                     <div>
                         <label className="block text-xs font-semibold text-gray-700 mb-1">
                             Name and Signature
@@ -68,20 +68,6 @@ export default function SignatureSection({
                                     )}
                                 </div>
                             )}
-                        </div>
-                    </div>
-                    <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">
-                            Date
-                        </label>
-                        <div className="border-b-2 border-gray-400 pb-1 print:border-b-0">
-                            <input
-                                type="date"
-                                name="requested_by_date"
-                                value={formData.requested_by_date || ""}
-                                readOnly
-                                className="w-full bg-transparent border-0 focus:outline-none text-sm text-center"
-                            />
                         </div>
                     </div>
                 </div>

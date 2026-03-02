@@ -21,14 +21,9 @@ const Vehicle = sequelize.define('Vehicle', {
       notEmpty: true
     }
   },
-  year: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    validate: {
-      isInt: true,
-      min: 1900,
-      max: 2100
-    }
+  coding_sched: {
+    type: DataTypes.STRING(50),
+    allowNull: true
   },
   plate: {
     type: DataTypes.STRING(50),

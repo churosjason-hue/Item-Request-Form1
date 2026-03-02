@@ -28,9 +28,9 @@ const WorkflowStep = sequelize.define('WorkflowStep', {
     comment: 'Name of this approval step (e.g., "Department Approval", "IT Manager Approval")'
   },
   approver_type: {
-    type: DataTypes.ENUM('role', 'user', 'department', 'department_approver'),
+    type: DataTypes.ENUM('role', 'user', 'department', 'department_approver', 'custom_matrix_role'),
     allowNull: false,
-    comment: 'Type of approver: role-based, specific user, department, or department approver'
+    comment: 'Type of approver: role-based, specific user, department, department approver, or custom matrix mapped role'
   },
   approver_role: {
     type: DataTypes.STRING(50),

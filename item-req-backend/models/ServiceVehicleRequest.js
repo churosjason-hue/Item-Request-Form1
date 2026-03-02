@@ -114,6 +114,11 @@ const ServiceVehicleRequest = sequelize.define('ServiceVehicleRequest', {
     defaultValue: true,
     comment: 'Whether the requestor has a valid drivers license'
   },
+  driver_name: {
+    type: DataTypes.STRING(200),
+    allowNull: true,
+    comment: 'Name of the driver'
+  },
   license_number: {
     type: DataTypes.STRING(50),
     allowNull: true,
@@ -194,6 +199,11 @@ const ServiceVehicleRequest = sequelize.define('ServiceVehicleRequest', {
     allowNull: true,
     comment: 'User ID of the temporary verifier'
   },
+  verifier_reason: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Reason for assigning the temporary verifier'
+  },
   verification_status: {
     type: DataTypes.STRING,
     allowNull: true,
@@ -209,6 +219,11 @@ const ServiceVehicleRequest = sequelize.define('ServiceVehicleRequest', {
     type: DataTypes.TEXT,
     allowNull: true,
     comment: 'Comments from the verifier'
+  },
+  cancellation_reason: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Reason provided by the requestor for cancelling the request'
   }
 }, {
   tableName: 'service_vehicle_requests',

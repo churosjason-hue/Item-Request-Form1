@@ -495,6 +495,72 @@ class EmailService {
     `;
   }
 
+  getVehicleRequestCancelledTemplate(vehicleRequest, requestor, odhcUser, reason) {
+    const requestorName = requestor.first_name && requestor.last_name
+      ? `${requestor.first_name} ${requestor.last_name}`
+      : requestor.username || vehicleRequest.requestor_name;
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f5; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+          .header { background-color: #ef4444; color: white; padding: 25px; text-align: center; }
+          .header h2 { margin: 0; font-size: 24px; font-weight: 600; }
+          .content { padding: 30px; }
+          .info-box { background-color: #f8fafc; border-radius: 6px; padding: 15px; margin: 20px 0; border: 1px solid #e2e8f0; }
+          .info-row { margin: 10px 0; display: flex; border-bottom: 1px solid #f1f5f9; padding-bottom: 5px; }
+          .info-row:last-child { border-bottom: none; }
+          .label { font-weight: 600; color: #64748b; width: 140px; min-width: 140px; }
+          .value { color: #0f172a; font-weight: 500; }
+          .reason-box { background-color: #fee2e2; padding: 15px; border-left: 4px solid #ef4444; margin: 15px 0; border-radius: 0 6px 6px 0; }
+          .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h2>Request Cancelled</h2>
+            <p style="margin: 5px 0 0; opacity: 0.9;">Service Vehicle Request</p>
+          </div>
+          <div class="content">
+            <p>Hello <strong>${odhcUser.first_name || odhcUser.username}</strong>,</p>
+            <p>A service vehicle request has been <strong>cancelled</strong> by the requestor.</p>
+            
+            <div class="info-box">
+              <div class="info-row">
+                <span class="label">Reference Code:</span>
+                <span class="value">${vehicleRequest.reference_code || vehicleRequest.id}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">Requestor:</span>
+                <span class="value">${requestorName}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">Travel Date:</span>
+                <span class="value">${vehicleRequest.travel_date_from ? new Date(vehicleRequest.travel_date_from).toLocaleDateString() : 'N/A'}</span>
+              </div>
+            </div>
+            
+            <div class="reason-box">
+              <p style="margin: 0 0 5px 0;"><strong>Cancellation Reason:</strong></p>
+              <p style="margin: 0;">${reason}</p>
+            </div>
+            
+            <p>No further action is required for this request.</p>
+          </div>
+          <div class="footer">
+            <p>This is an automated notification from the General Services Request System.</p>
+            <p>&copy; ${new Date().getFullYear()} Styrotech Corporation</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
   // Send notification methods
   async notifyRequestSubmitted(request, requestor, departmentApprover) {
     if (!requestor.email) {
@@ -622,6 +688,20 @@ class EmailService {
     const attachments = await this.prepareAttachments(vehicleRequest.attachments);
 
     return await this.sendEmail(requestor.email, subject, html, null, attachments);
+  }
+
+  async notifyVehicleRequestCancelled(vehicleRequest, requestor, odhcUser, reason) {
+    if (!odhcUser?.email) {
+      console.log(`⚠️ Skipping email - ODHC user has no email`);
+      return;
+    }
+
+    const subject = `Service Vehicle Request Cancelled: ${vehicleRequest.reference_code || vehicleRequest.id}`;
+    const html = this.getVehicleRequestCancelledTemplate(vehicleRequest, requestor, odhcUser, reason);
+
+    // Optional: add attachments if needed, but not required for cancellation notification
+
+    return await this.sendEmail(odhcUser.email, subject, html);
   }
 
   // Prepare attachments for email
@@ -1198,10 +1278,13 @@ class EmailService {
             <p>You have been assigned to verify the following Service Vehicle Request.</p>
             
             <div class="info-row">
-              <span class="label">Reference Code:</span> ${vehicleRequest.reference_code}
+              <span class="label">Reference Code:</span> ${vehicleRequest.reference_code || vehicleRequest.id}
             </div>
             <div class="info-row">
               <span class="label">Requestor:</span> ${requestor.first_name} ${requestor.last_name}
+            </div>
+            <div class="info-row">
+              <span class="label">Reason for Assignment:</span> ${vehicleRequest.verifier_reason || 'N/A'}
             </div>
             <div class="info-row">
               <span class="label">Travel Date:</span> ${vehicleRequest.travel_date_from}

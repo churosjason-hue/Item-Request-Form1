@@ -18,6 +18,11 @@ import workflowRoutes from './routes/workflows.js';
 import vehicleRoutes from './routes/vehicles.js';
 import driverRoutes from './routes/drivers.js';
 import auditLogRoutes from './routes/auditLogs.js';
+import itemRoutes from './routes/items.js';
+import categoryRoutes from './routes/categories.js';
+import settingsRoutes from './routes/settings.js';
+import chatbotRoutes from './routes/chatbot.js';
+import approvalMatrixRoutes from './routes/approvalMatrix.js';
 
 // Import database
 import { sequelize } from './config/database.js';
@@ -31,11 +36,13 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Rate limiting - Enabled for security
+// Rate limiting - Relaxed for connectivity stability
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  max: 3000, // Increased from 100 to 3000 to prevent false positive lockouts
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
 
 // Middleware
@@ -85,6 +92,12 @@ app.use('/api/workflows', workflowRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/drivers', driverRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/items', itemRoutes);
+app.use('/api/categories', categoryRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/chat', chatbotRoutes);
+app.use('/api/approval-matrix', approvalMatrixRoutes);
+
 // Option 1: Serve frontend static files from backend (Single Port Deployment)
 // This allows the backend to serve both API and frontend from the same port
 // Works in both development and production - just needs the dist folder to exist
@@ -203,16 +216,42 @@ async function startServer() {
 }
 
 // Handle graceful shutdown
+// Global error handlers to prevent silent crashes
+process.on('uncaughtException', (error) => {
+  console.error('CRITICAL: Uncaught Exception:', error);
+  // Optional: Perform cleanup or metrics logging here
+  // We might want to exit, but in dev mode, maybe keep running?
+  // For safety, usually best to log and exit, but let's log loudly first.
+  console.error(error.stack);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
+  // Application specific logging, throwing an error, or other logic here
+});
+
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully...');
-  await sequelize.close();
-  process.exit(0);
+  try {
+    await sequelize.close();
+    console.log('Database connection closed.');
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during graceful shutdown:', error);
+    process.exit(1);
+  }
 });
 
 process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully...');
-  await sequelize.close();
-  process.exit(0);
+  try {
+    await sequelize.close();
+    console.log('Database connection closed.');
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during graceful shutdown:', error);
+    process.exit(1);
+  }
 });
 
 startServer();

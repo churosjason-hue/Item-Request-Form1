@@ -17,27 +17,12 @@ const RequestItem = sequelize.define('RequestItem', {
     onDelete: 'CASCADE'
   },
   category: {
-    type: DataTypes.ENUM(
-      'laptop',
-      'desktop',
-      'monitor',
-      'keyboard',
-      'mouse',
-      'ups',
-      'printer',
-      'software',
-      'other_accessory',
-      'other_equipment'
-    ),
+    type: DataTypes.STRING,
     allowNull: false
   },
   item_description: {
     type: DataTypes.STRING(500),
-    allowNull: false,
-    validate: {
-      notEmpty: true,
-      len: [1, 500]
-    }
+    allowNull: true
   },
   quantity: {
     type: DataTypes.INTEGER,
@@ -89,6 +74,57 @@ const RequestItem = sequelize.define('RequestItem', {
     type: DataTypes.TEXT,
     allowNull: true,
     comment: 'Reason if item is urgently needed'
+  },
+  is_returned: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    comment: 'Whether the item has been returned to inventory'
+  },
+  returned_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: 'Date when the item was returned to inventory'
+  },
+  priority: {
+    type: DataTypes.ENUM('low', 'medium', 'high', 'urgent'),
+    allowNull: true,
+    defaultValue: 'medium'
+  },
+  date_required: {
+    type: DataTypes.DATEONLY,
+    allowNull: true
+  },
+  comments: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Additional comments specific to this item'
+  },
+  it_remarks: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Remarks or notes from IT Manager'
+  },
+  approval_status: {
+    type: DataTypes.ENUM('pending', 'approved', 'rejected'),
+    defaultValue: 'pending',
+    allowNull: false,
+    comment: 'Department line-item verification status'
+  },
+  endorser_status: {
+    type: DataTypes.ENUM('pending', 'in_stock', 'needs_pr'),
+    defaultValue: 'pending',
+    allowNull: true,
+    comment: 'Endorser recommendation: in_stock or needs_pr (informational only)'
+  },
+  endorser_remarks: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Remarks from endorser about item availability or PR requirements'
+  },
+  original_quantity: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: 'Original quantity requested before modification by approvers'
   }
 }, {
   tableName: 'request_items',
@@ -106,11 +142,11 @@ const RequestItem = sequelize.define('RequestItem', {
 });
 
 // Instance methods
-RequestItem.prototype.getTotalCost = function() {
+RequestItem.prototype.getTotalCost = function () {
   return this.estimated_cost ? (this.estimated_cost * this.quantity) : 0;
 };
 
-RequestItem.prototype.getCategoryDisplayName = function() {
+RequestItem.prototype.getCategoryDisplayName = function () {
   const categoryNames = {
     'laptop': 'Laptop',
     'desktop': 'Desktop Computer Set',
@@ -123,7 +159,7 @@ RequestItem.prototype.getCategoryDisplayName = function() {
     'other_accessory': 'Other Accessory',
     'other_equipment': 'Other Equipment'
   };
-  
+
   return categoryNames[this.category] || this.category;
 };
 

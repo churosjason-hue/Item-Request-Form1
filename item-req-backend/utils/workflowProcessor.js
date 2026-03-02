@@ -1,4 +1,4 @@
-import { ApprovalWorkflow, WorkflowStep, User, Department, Approval } from '../models/index.js';
+import { ApprovalWorkflow, WorkflowStep, User, Department, Approval, ApprovalMatrix } from '../models/index.js';
 import { Op } from 'sequelize';
 
 /**
@@ -37,26 +37,44 @@ export async function checkStepCompletion(step, requestId) {
 /**
  * Get the active workflow for a form type
  */
-export async function getActiveWorkflow(formType) {
+export async function getActiveWorkflow(formType, departmentId = null) {
   try {
-    console.log(`🔍 Looking for active workflow for form type: ${formType}`);
+    console.log(`🔍 Looking for active workflow for form type: ${formType}, department: ${departmentId}`);
 
-    // First try to find active AND default workflow
-    let workflow = await ApprovalWorkflow.findOne({
-      where: {
-        form_type: formType,
-        is_active: true,
-        is_default: true
-      },
-      order: [['created_at', 'DESC']] // Get the most recent default workflow
-    });
+    let workflow = null;
 
-    // If not found, try to find any active workflow (fallback)
-    if (!workflow) {
-      console.log(`⚠️ No active default workflow found, trying any active workflow...`);
+    // First try to find a department-specific workflow
+    if (departmentId) {
       workflow = await ApprovalWorkflow.findOne({
         where: {
           form_type: formType,
+          department_id: departmentId,
+          is_active: true
+        },
+        order: [['created_at', 'DESC']]
+      });
+    }
+
+    // If not found, try to find an active AND default global workflow
+    if (!workflow) {
+      workflow = await ApprovalWorkflow.findOne({
+        where: {
+          form_type: formType,
+          department_id: null,
+          is_active: true,
+          is_default: true
+        },
+        order: [['created_at', 'DESC']] // Get the most recent default workflow
+      });
+    }
+
+    // If still not found, try to find any active workflow globally (fallback)
+    if (!workflow) {
+      console.log(`⚠️ No active default workflow found, trying any active global workflow...`);
+      workflow = await ApprovalWorkflow.findOne({
+        where: {
+          form_type: formType,
+          department_id: null,
           is_active: true
         },
         order: [['created_at', 'DESC']]
@@ -94,8 +112,8 @@ export async function getActiveWorkflow(formType) {
 /**
  * Get the first pending step for a request
  */
-export async function getFirstPendingStep(formType) {
-  const workflow = await getActiveWorkflow(formType);
+export async function getFirstPendingStep(formType, departmentId = null) {
+  const workflow = await getActiveWorkflow(formType, departmentId);
 
   if (!workflow || !workflow.Steps || workflow.Steps.length === 0) {
     return null;
@@ -109,7 +127,7 @@ export async function getFirstPendingStep(formType) {
  * Find ALL valid approvers for a workflow step based on the step configuration
  * Phase 2 Improvement: Group Approvals
  */
-export async function findApproversForStep(step, requestData = {}) {
+export async function findApproversForStep(step, requestData = {}, formType = null) {
   if (!step) {
     console.warn('⚠️ No step provided to findApproversForStep');
     return [];
@@ -198,6 +216,27 @@ export async function findApproversForStep(step, requestData = {}) {
         }
 
         if (targetDeptId) {
+          // NEW LOGIC: Check ApprovalMatrix first
+          if (formType) {
+            const matrixRule = await ApprovalMatrix.findOne({
+              where: {
+                form_type: formType,
+                department_id: targetDeptId,
+                role: 'department_approver',
+                is_active: true
+              }
+            });
+
+            if (matrixRule) {
+              console.log(`   ✅ Found ApprovalMatrix override for this department/role! User ID: ${matrixRule.user_id}`);
+              const matrixUser = await User.findByPk(matrixRule.user_id);
+              if (matrixUser && matrixUser.is_active) {
+                approvers = [matrixUser];
+                break; // Skip the default department approver fallback
+              }
+            }
+          }
+
           approvers = await User.findAll({
             where: {
               department_id: targetDeptId,
@@ -207,6 +246,55 @@ export async function findApproversForStep(step, requestData = {}) {
           });
         } else {
           console.warn(`   ⚠️ No department specified and requires_same_department is false`);
+        }
+        break;
+
+      case 'custom_matrix_role':
+        // Find approver from the Approval Matrix based on formType, department, and custom role
+        let targetMatrixDeptId = null;
+
+        if (step.approver_department_id) {
+          targetMatrixDeptId = step.approver_department_id;
+        } else if (step.requires_same_department && requestData.department_id) {
+          targetMatrixDeptId = requestData.department_id;
+        } else {
+          // Fallback to requestor's department
+          targetMatrixDeptId = requestData.department_id;
+        }
+
+        if (targetMatrixDeptId && step.approver_role) {
+          // 1. Check ApprovalMatrix explicitly mapped user
+          const matrixRule = await ApprovalMatrix.findOne({
+            where: {
+              form_type: formType,
+              department_id: targetMatrixDeptId,
+              role: step.approver_role,
+              is_active: true
+            }
+          });
+
+          if (matrixRule) {
+            console.log(`   ✅ Found ApprovalMatrix override for custom role '${step.approver_role}'! User ID: ${matrixRule.user_id}`);
+            const matrixUser = await User.findByPk(matrixRule.user_id);
+            if (matrixUser && matrixUser.is_active) {
+              approvers = [matrixUser];
+              break;
+            }
+          }
+
+          // 2. If no explicit matrix rule, find any users in the department who hold this custom role tag
+          console.log(`   ⚠️ No ApprovalMatrix rule found, searching for users with custom_role '${step.approver_role}' in Dept: ${targetMatrixDeptId}`);
+
+          const allDeptUsers = await User.findAll({
+            where: {
+              department_id: targetMatrixDeptId,
+              is_active: true
+            }
+          });
+
+          approvers = allDeptUsers.filter(u => u.hasCustomRole(step.approver_role));
+        } else {
+          console.warn(`   ⚠️ Missing department ID or role name for custom_matrix_role lookup`);
         }
         break;
 
@@ -228,16 +316,16 @@ export async function findApproversForStep(step, requestData = {}) {
 }
 
 // Support legacy calls temporarily if needed, but best to update all callers
-export async function findApproverForStep(step, requestData) {
-  const list = await findApproversForStep(step, requestData);
+export async function findApproverForStep(step, requestData, formType = null) {
+  const list = await findApproversForStep(step, requestData, formType);
   return list[0] || null;
 }
 
 /**
  * Get the next step in the workflow after the current step
  */
-export async function getNextStep(formType, currentStepOrder) {
-  const workflow = await getActiveWorkflow(formType);
+export async function getNextStep(formType, currentStepOrder, departmentId = null) {
+  const workflow = await getActiveWorkflow(formType, departmentId);
 
   if (!workflow || !workflow.Steps || workflow.Steps.length === 0) {
     return null;
@@ -256,14 +344,14 @@ export async function getNextStep(formType, currentStepOrder) {
  */
 export async function processWorkflowOnSubmit(formType, requestData) {
   try {
-    const firstStep = await getFirstPendingStep(formType);
+    const firstStep = await getFirstPendingStep(formType, requestData.department_id);
 
     if (!firstStep) {
       console.warn(`No workflow found for form type: ${formType}. Using fallback logic.`);
       return null;
     }
 
-    const approvers = await findApproversForStep(firstStep, requestData);
+    const approvers = await findApproversForStep(firstStep, requestData, formType);
 
     if (!approvers || approvers.length === 0) {
       console.warn(`No approvers found for first step of workflow: ${formType}`);
@@ -287,13 +375,18 @@ export async function processWorkflowOnSubmit(formType, requestData) {
  */
 export async function findCurrentStepForApprover(formType, approver, requestStatus, requestData = {}) {
   try {
+    // Immediate short-circuit for final states to prevent looping
+    if (['completed', 'declined', 'cancelled', 'pr_approved', 'ready_to_deploy'].includes(requestStatus)) {
+      return null;
+    }
+
     // Phase 1 Improvement: Explicit State Tracking
     if (requestData.current_step_id) {
       const step = await WorkflowStep.findByPk(requestData.current_step_id);
 
       if (step) {
         // Check if the user is in the list of valid approvers for this step
-        const stepApprovers = await findApproversForStep(step, requestData);
+        const stepApprovers = await findApproversForStep(step, requestData, formType);
         const isApprover = stepApprovers.some(a => a.id === approver.id);
 
         if (isApprover) {
@@ -303,7 +396,7 @@ export async function findCurrentStepForApprover(formType, approver, requestStat
     }
 
     // Fallback: Legacy "Guessing" Logic
-    const workflow = await getActiveWorkflow(formType);
+    const workflow = await getActiveWorkflow(formType, requestData.department_id);
 
     if (!workflow || !workflow.Steps || workflow.Steps.length === 0) {
       return null;
@@ -311,7 +404,7 @@ export async function findCurrentStepForApprover(formType, approver, requestStat
 
     // Helper to check if approver is in the list for a step
     const checkStep = async (step) => {
-      const stepApprovers = await findApproversForStep(step, requestData);
+      const stepApprovers = await findApproversForStep(step, requestData, formType);
       return stepApprovers.some(a => a.id === approver.id);
     };
 
@@ -363,13 +456,13 @@ export async function findCurrentStepForApprover(formType, approver, requestStat
  */
 export async function processWorkflowOnApproval(formType, requestData, currentStepOrder) {
   try {
-    const nextStep = await getNextStep(formType, currentStepOrder);
+    const nextStep = await getNextStep(formType, currentStepOrder, requestData.department_id);
 
     if (!nextStep) {
       return null;
     }
 
-    const approvers = await findApproversForStep(nextStep, requestData);
+    const approvers = await findApproversForStep(nextStep, requestData, formType);
 
     if (!approvers || approvers.length === 0) {
       console.warn(`No approvers found for next step (order: ${nextStep.step_order}) of workflow: ${formType}`);
