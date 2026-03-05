@@ -22,7 +22,9 @@ import {
     FilePlus,
     Users,
     Building,
-    Shield
+    Shield,
+    GitBranch,
+    KeyRound
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import STC_LOGO from '../../assets/STC_LOGO.png';
@@ -315,10 +317,12 @@ const Sidebar = ({ isOpen, toggleSidebar, isMobile }) => {
                                 )}
                                 {isAdmin && isAdmin() && (
                                     <>
+                                        <TreeNode node={{ label: 'Workflow Setup', icon: GitBranch, path: '/settings/workflow-setup' }} depth={0} isOpen={isOpen} />
                                         <TreeNode node={{ label: 'Departments', icon: Building, path: '/departments' }} depth={0} isOpen={isOpen} />
                                         <TreeNode node={{ label: 'Workflows', icon: Settings, path: '/settings/workflows' }} depth={0} isOpen={isOpen} />
                                         <TreeNode node={{ label: 'Approval Matrix', icon: FileStack, path: '/settings/approval-matrix' }} depth={0} isOpen={isOpen} />
                                         <TreeNode node={{ label: 'Audit Logs', icon: Shield, path: '/audit-logs' }} depth={0} isOpen={isOpen} />
+                                        <TreeNode node={{ label: 'API Keys', icon: KeyRound, path: '/settings/api-keys' }} depth={0} isOpen={isOpen} />
                                     </>
                                 )}
                             </>

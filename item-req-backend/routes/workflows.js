@@ -642,13 +642,6 @@ router.delete('/:id', authenticateToken, requireRole(['super_administrator']), a
       });
     }
 
-    // Check if workflow is default
-    if (workflow.is_default) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot delete default workflow. Please set another workflow as default first.'
-      });
-    }
 
     // Check if workflow is in use
     // For item requests

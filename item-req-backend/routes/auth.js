@@ -44,39 +44,6 @@ router.post('/login', [
     });
 
     if (!user) {
-      // Find or create department using Department attribute only (not OU)
-      let department = null;
-      let departmentName = null;
-
-      // Use Department attribute from user profile
-      if (ldapUser.department && ldapUser.department.trim()) {
-        departmentName = ldapUser.department.trim();
-        console.log(`✅ Login: Found department "${departmentName}" from Department attribute`);
-      }
-
-      if (!departmentName) {
-        console.log(`⚠️ Login: No department attribute found for user ${ldapUser.username || ldapUser.email}`);
-      }
-
-      // Find or create department if we have a name
-      if (departmentName) {
-        // Try to find by name
-        department = await Department.findOne({
-          where: { name: departmentName }
-        });
-
-        // Create department if it doesn't exist
-        if (!department) {
-          department = await Department.create({
-            name: departmentName,
-            description: departmentName,
-            ad_dn: null, // No OU DN stored when using attributes
-            is_active: true,
-            last_ad_sync: new Date()
-          });
-        }
-      }
-
       // Create new user with default role (generate username from email if not available)
       const usernameValue = ldapUser.username || ldapUser.email.split('@')[0];
 
@@ -85,8 +52,6 @@ router.post('/login', [
         email: ldapUser.email,
         first_name: ldapUser.firstName || '',
         last_name: ldapUser.lastName || '',
-        department_id: department?.id,
-        title: ldapUser.title,
         phone: ldapUser.phone,
         role: 'requestor', // Default role - will be manually assigned by admin
         ad_dn: ldapUser.dn,
@@ -104,48 +69,13 @@ router.post('/login', [
         }]
       });
     } else {
-      // Update existing user with latest AD data (keep existing role)
-
-      // Find department using Department attribute only (not OU)
-      let department = user.Department;
-      let currentDepartmentName = null;
-
-      // Use Department attribute from user profile
-      if (ldapUser.department && ldapUser.department.trim()) {
-        currentDepartmentName = ldapUser.department.trim();
-        console.log(`✅ Login (update): Found department "${currentDepartmentName}" from Department attribute`);
-      }
-
-      if (!currentDepartmentName) {
-        console.log(`⚠️ Login (update): No department attribute found for user ${ldapUser.username || ldapUser.email}`);
-      }
-
-      // Update department if found and different from current
-      if (currentDepartmentName && (!department || department.name !== currentDepartmentName)) {
-        // Try to find by name
-        let newDepartment = await Department.findOne({
-          where: { name: currentDepartmentName }
-        });
-
-        // Create department if it doesn't exist
-        if (!newDepartment) {
-          newDepartment = await Department.create({
-            name: currentDepartmentName,
-            description: currentDepartmentName,
-            ad_dn: null, // No OU DN stored when using attributes
-            is_active: true,
-            last_ad_sync: new Date()
-          });
-        }
-
-        department = newDepartment;
-      }
+      // Update existing user with latest AD data (keep existing role and department)
 
       // Update user data
       await user.update({
         first_name: ldapUser.firstName || user.first_name,
         last_name: ldapUser.lastName || user.last_name,
-        department_id: department?.id || user.department_id,
+        department_id: user.department_id,
         title: ldapUser.title || user.title,
         phone: ldapUser.phone || user.phone,
         ad_dn: ldapUser.dn,

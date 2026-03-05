@@ -26,10 +26,10 @@ const TrackRequest = () => {
       const code = ticketCode.trim();
 
       // Try to determine request type based on code format
-      // REQ-* = Item request, SVR-* = Vehicle request
+      // REQ-* / ITR-* = Item request, SVR-* / SVRF* = Vehicle request
       let response;
 
-      if (code.startsWith('SVR-')) {
+      if (code.startsWith('SVR-') || code.startsWith('SVRF')) {
         // Vehicle request
         try {
           response = await serviceVehicleRequestsAPI.trackByReference(code);
@@ -167,7 +167,7 @@ const TrackRequest = () => {
                     setTicketCode(e.target.value);
                     setError('');
                   }}
-                  placeholder="e.g., ITR-0203-00001 or SVR-20240106-123456"
+                  placeholder="e.g., ITR-0203-00001 or SVRF2026-0193"
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
                   disabled={loading}
                 />
@@ -311,14 +311,14 @@ const TrackRequest = () => {
                       {getStatusIcon(event)}
                     </div>
                     <div className={`flex-1 pb-4 border-b border-gray-200 last:border-0 ${event.isPending ? 'bg-yellow-50 -mx-4 px-4 py-3 rounded' :
-                        event.isCancelled ? 'bg-gray-50 -mx-4 px-4 py-3 rounded' : ''
+                      event.isCancelled ? 'bg-gray-50 -mx-4 px-4 py-3 rounded' : ''
                       }`}>
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
                             <h4 className={`font-medium ${event.isPending ? 'text-yellow-900' :
-                                event.isCancelled ? 'text-gray-500' :
-                                  'text-gray-900 dark:text-white'
+                              event.isCancelled ? 'text-gray-500' :
+                                'text-gray-900 dark:text-white'
                               }`}>
                               {event.status}
                             </h4>
@@ -344,8 +344,8 @@ const TrackRequest = () => {
                             )}
                           </div>
                           <p className={`text-sm mt-1 ${event.isPending ? 'text-yellow-700 font-medium' :
-                              event.isCancelled ? 'text-gray-400' :
-                                'text-gray-600'
+                            event.isCancelled ? 'text-gray-400' :
+                              'text-gray-600'
                             }`}>
                             {event.description}
                           </p>
@@ -368,8 +368,8 @@ const TrackRequest = () => {
                         </div>
                         <div className="text-right ml-4">
                           <span className={`text-sm ${event.isPending ? 'text-yellow-600 font-medium' :
-                              event.isCancelled ? 'text-gray-400' :
-                                'text-gray-500'
+                            event.isCancelled ? 'text-gray-400' :
+                              'text-gray-500'
                             }`}>
                             {event.isPending ? 'Pending' : (event.timestamp ? formatDate(event.timestamp) : (event.isCompleted ? 'Completed' : ''))}
                           </span>

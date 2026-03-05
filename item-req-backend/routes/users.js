@@ -61,6 +61,7 @@ router.get('/', authenticateToken, requireRole('super_administrator', 'it_manage
         lastName: user.last_name,
         fullName: user.getFullName(),
         role: user.role,
+        customRoles: user.custom_roles || [],
         title: user.title,
         phone: user.phone,
         isActive: user.is_active,
@@ -115,6 +116,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       lastName: user.last_name,
       fullName: user.getFullName(),
       role: user.role,
+      customRoles: user.custom_roles || [],
       title: user.title,
       phone: user.phone,
       isActive: user.is_active,
@@ -207,6 +209,97 @@ router.patch('/:id/role', authenticateToken, requireRole('super_administrator'),
       error: 'Failed to update user role',
       message: error.message
     });
+  }
+});
+
+// Update user custom roles (super_administrator only)
+router.patch('/:id/custom-roles', authenticateToken, requireRole('super_administrator'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { customRoles } = req.body;
+
+    if (!Array.isArray(customRoles)) {
+      return res.status(400).json({
+        error: 'Invalid input',
+        message: 'customRoles must be an array of strings'
+      });
+    }
+
+    const user = await User.findByPk(id);
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'The requested user does not exist'
+      });
+    }
+
+    await user.update({ custom_roles: customRoles });
+
+    // Audit Log: User Custom Roles Updated
+    await logAudit({
+      req,
+      action: 'UPDATE',
+      entityType: 'User',
+      entityId: user.id,
+      details: {
+        change: 'Custom Roles Update',
+        customRoles: customRoles
+      }
+    });
+
+    res.json({
+      message: 'User custom roles updated successfully',
+      user: {
+        id: user.id,
+        username: user.username,
+        customRoles: user.custom_roles
+      }
+    });
+  } catch (error) {
+    console.error('Error updating user custom roles:', error);
+    res.status(500).json({
+      error: 'Failed to update user custom roles',
+      message: error.message
+    });
+  }
+});
+
+// Assign user to department (DB only, no AD sync) - used by Workflow Setup
+router.patch('/:id/assign-department', authenticateToken, requireRole('super_administrator'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { departmentId } = req.body;
+
+    const user = await User.findByPk(id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found', message: 'The specified user does not exist' });
+    }
+
+    if (departmentId) {
+      const dept = await Department.findByPk(departmentId);
+      if (!dept) {
+        return res.status(400).json({ error: 'Invalid department', message: 'Department not found' });
+      }
+    }
+
+    await user.update({ department_id: departmentId || null });
+
+    await logAudit({
+      req,
+      action: 'UPDATE',
+      entityType: 'User',
+      entityId: user.id,
+      details: { change: 'Department Assignment', departmentId: departmentId || null }
+    });
+
+    res.json({
+      message: 'User department updated successfully',
+      user: { id: user.id, username: user.username, departmentId: user.department_id }
+    });
+  } catch (error) {
+    console.error('Error assigning user department:', error);
+    res.status(500).json({ error: 'Failed to assign department', message: error.message });
   }
 });
 
@@ -400,6 +493,7 @@ router.patch('/:id/department', authenticateToken, requireRole('super_administra
         lastName: updatedUser.last_name,
         fullName: updatedUser.getFullName(),
         role: updatedUser.role,
+        customRoles: updatedUser.custom_roles || [],
         title: updatedUser.title,
         isActive: updatedUser.is_active,
         department: updatedUser.Department ? {
@@ -574,6 +668,7 @@ router.post('/:username/sync', authenticateToken, requireRole('super_administrat
         id: result.user.id,
         username: result.user.username,
         email: result.user.email,
+        customRoles: result.user.custom_roles || [],
         created: result.created
       }
     });
@@ -643,6 +738,7 @@ router.get('/department/:departmentId', authenticateToken, async (req, res) => {
         lastName: user.last_name,
         fullName: user.getFullName(),
         role: user.role,
+        customRoles: user.custom_roles || [],
         title: user.title
       }))
     });

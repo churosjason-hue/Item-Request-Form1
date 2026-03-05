@@ -93,6 +93,7 @@ export default function ServiceVehicleRequestForm() {
     status: "",
     assigned_driver: "",
     assigned_vehicle: "",
+    assigned_vehicle_other: "",
     approval_date: "",
     urgency_justification: "",
     verifier_reason: "",
@@ -105,6 +106,7 @@ export default function ServiceVehicleRequestForm() {
   const [pendingFiles, setPendingFiles] = useState([]); // Files selected before request is saved
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [availableVehicles, setAvailableVehicles] = useState([]);
+  const [unavailableVehicles, setUnavailableVehicles] = useState([]);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [requestorDepartment, setRequestorDepartment] = useState("");
   const [availableDrivers, setAvailableDrivers] = useState([]);
@@ -186,8 +188,7 @@ export default function ServiceVehicleRequestForm() {
     }
 
     // Fetch available vehicles and drivers
-    loadAvailableVehicles();
-    loadAvailableDrivers();
+    loadAvailableVehiclesAndDrivers();
   }, [user, id]);
 
   const loadAvailableVehicles = async () => {
@@ -200,21 +201,67 @@ export default function ServiceVehicleRequestForm() {
     }
   };
 
-  const loadAvailableDrivers = async () => {
+  // Fetch availability-aware vehicles & drivers — called initially and on date/time change
+  const loadAvailableVehiclesAndDrivers = async (overrideFormData = null) => {
+    const data = overrideFormData || formData;
+    const { travel_date_from, travel_date_to, pick_up_time, drop_off_time } = data;
+
+    if (travel_date_from && travel_date_to) {
+      // We have dates — use the booking-aware availability endpoint
+      try {
+        const res = await serviceVehicleRequestsAPI.checkAvailability(
+          travel_date_from,
+          travel_date_to,
+          pick_up_time || null,
+          drop_off_time || null,
+          id || null // exclude the current request from blocking itself
+        );
+        setAvailableVehicles(res.data.availableVehicles || []);
+        setUnavailableVehicles(res.data.unavailableVehicles || []);
+        setAvailableDrivers(res.data.availableDrivers || []);
+      } catch (error) {
+        console.error('Error fetching availability:', error);
+        // Fallback: load all
+        loadAllVehicles();
+        loadAllDrivers();
+      }
+    } else {
+      // No dates yet — just load all so the dropdowns aren't empty
+      loadAllVehicles();
+      loadAllDrivers();
+    }
+  };
+
+  const loadAllVehicles = async () => {
+    try {
+      const response = await vehicleManagementApi.getAll();
+      setAvailableVehicles(response.data || []);
+    } catch (error) {
+      console.error('Error fetching vehicles:', error);
+      setAvailableVehicles([]);
+    }
+  };
+
+  const loadAllDrivers = async () => {
     try {
       const response = await driverManagementApi.getAll();
-      // Filter only active drivers
       const activeDrivers = (
-        response.data?.drivers ||
-        response.data ||
-        []
-      ).filter((driver) => driver.status === "active");
+        response.data?.drivers || response.data || []
+      ).filter((driver) => driver.status === 'active');
       setAvailableDrivers(activeDrivers);
     } catch (error) {
-      console.error("Error fetching available drivers:", error);
+      console.error('Error fetching drivers:', error);
       setAvailableDrivers([]);
     }
   };
+
+  // Re-fetch availability-aware vehicles & drivers whenever key date/time fields change
+  useEffect(() => {
+    if (formData.travel_date_from && formData.travel_date_to) {
+      loadAvailableVehiclesAndDrivers(formData);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.travel_date_from, formData.travel_date_to, formData.pick_up_time, formData.drop_off_time]);
 
   const loadFormData = async (requestId) => {
     try {
@@ -275,7 +322,11 @@ export default function ServiceVehicleRequestForm() {
             ? new Date(data.requested_date).toISOString().split("T")[0]
             : ""),
         assigned_driver: data.assigned_driver || "",
-        assigned_vehicle: data.assigned_vehicle || "",
+        // If assigned_vehicle is null but assigned_vehicle_other is set, restore 'other' selection
+        assigned_vehicle: data.assigned_vehicle
+          ? String(data.assigned_vehicle)
+          : (data.assigned_vehicle_other ? "other" : ""),
+        assigned_vehicle_other: data.assigned_vehicle_other || "",
         approval_date: data.approval_date || new Date().toISOString().split("T")[0],
       });
 
@@ -644,10 +695,11 @@ export default function ServiceVehicleRequestForm() {
 
     // Check permissions based on user role and request status
     const isApprover = user?.role === "department_approver" || user?.role === "super_administrator";
-    const isRequestor = user?.role === "requestor";
+    // isRequestor means: the current user is the owner of this request (not role-based)
+    const isRequestor = user?.id === formData.requested_by;
 
     if (isRequestor) {
-      // Requestors can upload attachments when status is draft or returned
+      // The request owner can upload when status is draft or returned
       if (!["draft", "returned"].includes(formData.status)) {
         toastWarning("You can only upload attachments when the request is in draft or returned status");
         event.target.value = ""; // Reset file input
@@ -738,11 +790,12 @@ export default function ServiceVehicleRequestForm() {
     try {
       setLoading(true);
 
+      const isOtherVehicle = formData.assigned_vehicle === 'other';
+
       const section4Data = {
         assigned_driver: formData.assigned_driver || null,
-        assigned_vehicle: formData.assigned_vehicle
-          ? parseInt(formData.assigned_vehicle)
-          : null,
+        assigned_vehicle: isOtherVehicle ? null : (formData.assigned_vehicle ? parseInt(formData.assigned_vehicle) : null),
+        assigned_vehicle_other: isOtherVehicle ? (formData.assigned_vehicle_other || null) : null,
         approval_date: formData.approval_date || null,
       };
 
@@ -811,7 +864,7 @@ export default function ServiceVehicleRequestForm() {
         return;
       }
 
-      if (!formData.assigned_vehicle) {
+      if (!formData.assigned_vehicle && !formData.assigned_vehicle_other) {
         toastWarning(
           "Please fill in the Assigned Vehicle field in Section 4 before approving."
         );
@@ -852,12 +905,12 @@ export default function ServiceVehicleRequestForm() {
           setActionModalState(prev => ({ ...prev, isOpen: false }));
           setLoading(true);
 
+          const isOtherVehicle = formData.assigned_vehicle === 'other';
           // Ensure assigned_vehicle is sent as a number or null
           const approvalData = {
             remarks: approvalReason || "",
-            assigned_vehicle: formData.assigned_vehicle
-              ? parseInt(formData.assigned_vehicle)
-              : null,
+            assigned_vehicle: isOtherVehicle ? null : (formData.assigned_vehicle ? parseInt(formData.assigned_vehicle) : null),
+            assigned_vehicle_other: isOtherVehicle ? (formData.assigned_vehicle_other || null) : null,
           };
 
           try {
@@ -981,7 +1034,12 @@ export default function ServiceVehicleRequestForm() {
     ["draft", "returned"].includes(formData.status) &&
     user?.id === formData.requested_by;
 
-  const canEdit = isCreating || isValidEditState || isReturnedAndCanEdit;
+  const isOwnDraftViewing =
+    isViewing &&
+    formData.status === 'draft' &&
+    user?.id === formData.requested_by;
+
+  const canEdit = isCreating || isValidEditState || isReturnedAndCanEdit || isOwnDraftViewing;
 
   const isReadOnly = !canEdit;
 
@@ -1060,7 +1118,7 @@ export default function ServiceVehicleRequestForm() {
                 <div className="text-sm text-gray-600 mt-2 print:mt-1">
                   Reference Code:{" "}
                   <span className="font-semibold">
-                    {formData.reference_code || `SVR-${id}`}
+                    {formData.reference_code || `SVRF-${id}`}
                   </span>
                 </div>
               )}
@@ -1553,6 +1611,7 @@ export default function ServiceVehicleRequestForm() {
               availableDrivers={availableDrivers}
               selectedVehicle={selectedVehicle}
               availableVehicles={availableVehicles}
+              unavailableVehicles={unavailableVehicles}
               handleChange={handleChange}
               handleSaveSection4={handleSaveSection4}
             />
@@ -1570,8 +1629,10 @@ export default function ServiceVehicleRequestForm() {
                   - Approvers: when reviewing (submitted, returned, department_approved, or completed status)
               */}
               {(
-                // Requestors can upload if creating new, or status is draft/returned
-                (user?.role === "requestor" && (!id || ["draft", "returned"].includes(formData.status))) ||
+                // Request owner can upload if creating new, or status is draft/returned
+                (user?.id === formData.requested_by && (!id || ["draft", "returned"].includes(formData.status))) ||
+                // New request (not yet saved) - always allow
+                (!id) ||
                 // Approvers can upload when status is submitted, returned, department_approved, or completed
                 (id && (user?.role === "department_approver" || user?.role === "super_administrator") &&
                   ["submitted", "returned", "department_approved", "completed"].includes(formData.status))
@@ -1720,9 +1781,15 @@ export default function ServiceVehicleRequestForm() {
                 {isViewing ? "Back" : "Cancel"}
               </button>
 
-              {/* Show edit/submit buttons for requestor when: creating, editing, or viewing returned requests */}
-              {user?.role === "requestor" &&
-                (isCreating || isEditing || (isViewing && isReturnedAndCanEdit)) && (
+              {/* Show edit/submit buttons for any user when: creating, editing, or viewing their own draft/returned requests */}
+              {(() => {
+                const canShowSubmit =
+                  isCreating ||
+                  isEditing ||
+                  (isViewing && user?.id === formData.requested_by &&
+                    ['draft', 'returned'].includes(formData.status));
+                if (!canShowSubmit) return null;
+                return (
                   <>
                     <button
                       type="button"
@@ -1749,7 +1816,8 @@ export default function ServiceVehicleRequestForm() {
                         : "Submit Request"}
                     </button>
                   </>
-                )}
+                );
+              })()}
 
               {/* Verifier Actions */}
               {isViewing && formData.verifier_id === user?.id && formData.verification_status === 'pending' && (
@@ -1813,10 +1881,14 @@ export default function ServiceVehicleRequestForm() {
 
               {/* ODHC (Department Approver) Actions - Only for vehicle requests */}
               {(() => {
-                // Allow approval/return/decline for: submitted, returned, and department_approved (for Step 2 approvers)
-                // Also allow for any workflow intermediate statuses
+                // Only show approval buttons if this user is actually the pending approver for this request
+                const isAssignedApprover =
+                  formData.isPendingMyApproval ||
+                  user?.role === "super_administrator";
+
                 const canApprove =
                   isViewing &&
+                  isAssignedApprover &&
                   (user?.role === "department_approver" ||
                     user?.role === "super_administrator") &&
                   (formData.status === "submitted" ||
@@ -1827,22 +1899,7 @@ export default function ServiceVehicleRequestForm() {
                       formData.status !== "declined" &&
                       formData.status !== "draft" &&
                       formData.status !== "department_approved"));
-                if (
-                  isViewing &&
-                  (user?.role === "department_approver" ||
-                    user?.role === "super_administrator")
-                ) {
-                  console.log(
-                    "Approval button check - isViewing:",
-                    isViewing,
-                    "role:",
-                    user?.role,
-                    "status:",
-                    formData.status,
-                    "canApprove:",
-                    canApprove
-                  );
-                }
+
                 return canApprove;
               })() && (
                   <>

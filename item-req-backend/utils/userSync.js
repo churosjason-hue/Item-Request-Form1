@@ -31,17 +31,10 @@ class UserSyncService {
 
     try {
       console.log('🔄 Starting AD user synchronization...');
-      
+
       // Get all users from AD
       const adUsers = await ldapService.getAllUsers();
       console.log(`📊 Found ${adUsers.length} users in Active Directory`);
-
-      // Get all departments from AD
-      const adDepartments = await ldapService.getDepartments();
-      console.log(`📊 Found ${adDepartments.length} departments in Active Directory`);
-
-      // Sync departments first
-      await this.syncDepartments(adDepartments);
 
       // Sync users
       await this.syncUsers(adUsers);
@@ -51,7 +44,7 @@ class UserSyncService {
 
       this.lastSyncTime = new Date();
       console.log('✅ AD user synchronization completed successfully');
-      
+
       return {
         success: true,
         syncTime: this.lastSyncTime,
@@ -61,7 +54,7 @@ class UserSyncService {
     } catch (error) {
       console.error('❌ AD user synchronization failed:', error);
       this.syncStats.errors.push(error.message);
-      
+
       return {
         success: false,
         error: error.message,
@@ -69,50 +62,6 @@ class UserSyncService {
       };
     } finally {
       this.syncInProgress = false;
-    }
-  }
-
-  async syncDepartments(adDepartments) {
-    for (const adDept of adDepartments) {
-      try {
-        // Build where clause - only include ad_dn if it exists
-        const whereClause = { name: adDept.name };
-        if (adDept.dn) {
-          whereClause[Op.or] = [
-            { name: adDept.name },
-            { ad_dn: adDept.dn }
-          ];
-        }
-
-        const [department, created] = await Department.findOrCreate({
-          where: whereClause,
-          defaults: {
-            name: adDept.name,
-            description: adDept.description || adDept.name,
-            ad_dn: adDept.dn,
-            is_active: true,
-            last_ad_sync: new Date()
-          }
-        });
-
-        if (created) {
-          this.syncStats.departmentsCreated++;
-          console.log(`➕ Created department: ${adDept.name}`);
-        } else {
-          // Update existing department
-          await department.update({
-            name: adDept.name,
-            description: adDept.description || department.description,
-            ad_dn: adDept.dn,
-            last_ad_sync: new Date()
-          });
-          this.syncStats.departmentsUpdated++;
-          console.log(`🔄 Updated department: ${adDept.name}`);
-        }
-      } catch (error) {
-        console.error(`❌ Error syncing department ${adDept.name}:`, error.message);
-        this.syncStats.errors.push(`Department ${adDept.name}: ${error.message}`);
-      }
     }
   }
 
@@ -138,38 +87,7 @@ class UserSyncService {
         }
 
         // Find department using Department attribute only (not OU)
-        let department = null;
-        let departmentName = null;
-        
-        // Use Department attribute from user profile
-        if (adUser.department && adUser.department.trim()) {
-          departmentName = adUser.department.trim();
-          console.log(`✅ Found department "${departmentName}" from Department attribute`);
-        }
-        
-        if (!departmentName) {
-          console.log(`⚠️ No department attribute found for user ${adUser.username || adUser.email}`);
-        }
-        
-        // Find or create department if we have a name
-        if (departmentName) {
-          // Try to find by name
-          department = await Department.findOne({
-            where: { name: departmentName }
-          });
-          
-          // Create department if it doesn't exist
-          if (!department) {
-            console.log(`➕ Creating new department: ${departmentName}`);
-            department = await Department.create({
-              name: departmentName,
-              description: departmentName,
-              ad_dn: null, // No OU DN stored when using attributes
-              is_active: true,
-              last_ad_sync: new Date()
-            });
-          }
-        }
+        // Department linking is bypassed - departments will be explicitly assigned by an administrator.
 
         // Use default role for new users (roles are managed manually in database)
 
@@ -185,7 +103,7 @@ class UserSyncService {
         if (adUser.email) searchCriteria.push({ email: adUser.email });
 
         const [user, created] = await User.findOrCreate({
-          where: { 
+          where: {
             [Op.or]: searchCriteria
           },
           defaults: {
@@ -193,7 +111,6 @@ class UserSyncService {
             email: email,
             first_name: adUser.firstName || '',
             last_name: adUser.lastName || '',
-            department_id: department?.id,
             title: adUser.title,
             phone: adUser.phone,
             role: 'requestor', // Default role - manually assigned by admin
@@ -213,7 +130,6 @@ class UserSyncService {
             email: email,
             first_name: adUser.firstName || user.first_name,
             last_name: adUser.lastName || user.last_name,
-            department_id: department?.id || user.department_id,
             title: adUser.title || user.title,
             phone: adUser.phone || user.phone,
             // role: keep existing role - don't update from AD
@@ -234,7 +150,7 @@ class UserSyncService {
   async markInactiveUsers(adUsers) {
     try {
       const adUsernames = adUsers.map(user => user.username).filter(Boolean);
-      
+
       if (adUsernames.length === 0) {
         return;
       }
@@ -269,30 +185,19 @@ class UserSyncService {
   async syncSingleUser(username) {
     try {
       console.log(`🔄 Syncing single user: ${username}`);
-      
+
       const adUser = await ldapService.getUserDetails(username);
-      
+
       if (!adUser) {
         throw new Error('User not found in Active Directory');
       }
 
-      // Find or create department
-      let department = null;
-      if (adUser.department) {
-        [department] = await Department.findOrCreate({
-          where: { name: adUser.department },
-          defaults: {
-            description: adUser.department,
-            is_active: true,
-            last_ad_sync: new Date()
-          }
-        });
-      }
+      // Department linking is bypassed - departments will be explicitly assigned by an administrator.
 
       // Use default role for new users (roles are managed manually in database)
 
       const [user, created] = await User.findOrCreate({
-        where: { 
+        where: {
           [Op.or]: [
             { username: adUser.username },
             { email: adUser.email }
@@ -303,7 +208,6 @@ class UserSyncService {
           email: adUser.email,
           first_name: adUser.firstName || '',
           last_name: adUser.lastName || '',
-          department_id: department?.id,
           title: adUser.title,
           phone: adUser.phone,
           role: 'requestor', // Default role - manually assigned by admin
@@ -319,7 +223,6 @@ class UserSyncService {
           email: adUser.email,
           first_name: adUser.firstName || user.first_name,
           last_name: adUser.lastName || user.last_name,
-          department_id: department?.id || user.department_id,
           title: adUser.title || user.title,
           phone: adUser.phone || user.phone,
           // role: keep existing role - don't update from AD
@@ -350,7 +253,7 @@ class UserSyncService {
   // Schedule automatic sync (to be called from a cron job or scheduler)
   async scheduleSync(intervalHours = 24) {
     const intervalMs = intervalHours * 60 * 60 * 1000;
-    
+
     const runSync = async () => {
       try {
         await this.syncAllUsers();
@@ -364,7 +267,7 @@ class UserSyncService {
 
     // Schedule recurring sync
     setInterval(runSync, intervalMs);
-    
+
     console.log(`📅 Scheduled AD sync every ${intervalHours} hours`);
   }
 }

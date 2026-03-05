@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Sidebar, SidebarBody } from "../ui/sidebar";
 import {
     LayoutDashboard,
@@ -18,6 +18,9 @@ import {
     Shield,
     Package,
     Monitor,
+    GitBranch,
+    Lock,
+    KeyRound,
 } from "lucide-react";
 import { Link, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -26,6 +29,8 @@ import STC_LOGO from '../../assets/STC_LOGO.png';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Sun, Moon } from "lucide-react";
+import { settingsAPI } from '../../services/api';
+import { DEFAULT_ROLE_UI_CONFIG } from '../admin/RoleUIConfig';
 
 // ── Tree Node ────────────────────────────────────────────────
 const TreeNode = ({ node, depth = 0, sidebarOpen }) => {
@@ -118,13 +123,50 @@ export function Layout() {
     const { theme, toggleTheme } = useTheme();
     const navigate = useNavigate();
     const [open, setOpen] = useState(false);
+    const [allowedMenus, setAllowedMenus] = useState(null); // null = not loaded yet
 
     const handleLogout = async () => {
         await logout();
         navigate('/login');
     };
 
-    // Tree structure — same for all roles
+    // Load role UI config on mount
+    useEffect(() => {
+        const loadConfig = async () => {
+            try {
+                const res = await settingsAPI.getRoleUIConfig();
+                const savedConfig = res.data.value;
+                if (savedConfig && typeof savedConfig === 'object' && user?.role) {
+                    // Merge saved with defaults so new items fall back to default
+                    const merged = { ...DEFAULT_ROLE_UI_CONFIG, ...savedConfig };
+                    setAllowedMenus(merged[user.role] ?? DEFAULT_ROLE_UI_CONFIG[user.role] ?? []);
+                } else {
+                    // No saved config — use defaults
+                    setAllowedMenus(DEFAULT_ROLE_UI_CONFIG[user?.role] ?? []);
+                }
+            } catch (err) {
+                console.warn('Could not load role UI config, using defaults:', err);
+                setAllowedMenus(DEFAULT_ROLE_UI_CONFIG[user?.role] ?? []);
+            }
+        };
+        if (user?.role) loadConfig();
+    }, [user?.role]);
+
+    // Helper: is a menu item allowed for the current user?
+    const can = (key) => {
+        if (!allowedMenus) return false; // still loading
+        return allowedMenus.includes(key);
+    };
+
+    // Filter children of tree nodes based on config
+    const filterChildren = (children) =>
+        children
+            .filter(child => !child.menuKey || can(child.menuKey))
+            .map(child => ({
+                ...child,
+                children: child.children ? filterChildren(child.children) : undefined
+            }));
+
     const tree = [
         // ── BSP ──────────────────────────────────
         {
@@ -136,7 +178,7 @@ export function Layout() {
                     label: 'System',
                     icon: Settings,
                     defaultOpen: false,
-                    children: [] // no system pages yet
+                    children: []
                 },
                 {
                     label: 'Forms',
@@ -146,7 +188,8 @@ export function Layout() {
                         {
                             label: 'IT Requisition Form',
                             icon: FilePlus,
-                            path: '/requests'
+                            path: '/requests',
+                            menuKey: 'it_requisition'
                         }
                     ]
                 }
@@ -162,7 +205,7 @@ export function Layout() {
                     label: 'System',
                     icon: Settings,
                     defaultOpen: false,
-                    children: [] // no system pages yet
+                    children: []
                 },
                 {
                     label: 'Forms',
@@ -172,7 +215,8 @@ export function Layout() {
                         {
                             label: 'Service Vehicle Request Form',
                             icon: Car,
-                            path: '/service-vehicle-requests'
+                            path: '/service-vehicle-requests',
+                            menuKey: 'service_vehicle'
                         }
                     ]
                 }
@@ -187,131 +231,142 @@ export function Layout() {
                 {
                     label: 'IT Requisition Form',
                     icon: FilePlus,
-                    path: '/requests'
+                    path: '/requests',
+                    menuKey: 'it_requisition'
                 },
                 {
                     label: 'Service Vehicle Request Form',
                     icon: Car,
-                    path: '/service-vehicle-requests'
+                    path: '/service-vehicle-requests',
+                    menuKey: 'service_vehicle'
                 }
             ]
         }
     ];
 
+    const filteredTree = filterChildren(tree);
+
     return (
         <div className={cn("flex flex-col md:flex-row w-full flex-1 h-screen overflow-hidden")}>
-            <Sidebar open={open} setOpen={setOpen}>
-                <SidebarBody className="justify-between gap-10 border-r border-gray-200 dark:border-gray-800">
-                    <div className="flex flex-col flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar">
-                        {open ? <Logo /> : <LogoIcon />}
+            <div className="no-print h-full flex-shrink-0">
+                <Sidebar open={open} setOpen={setOpen}>
+                    <SidebarBody className="justify-between gap-10 border-r border-gray-200 dark:border-gray-800">
+                        <div className="flex flex-col flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar">
+                            {open ? <Logo /> : <LogoIcon />}
 
-                        <div className="mt-6 flex flex-col gap-1">
-                            {/* Dashboard */}
-                            <TreeNode
-                                node={{
-                                    label: 'Dashboard',
-                                    icon: LayoutDashboard,
-                                    path: '/dashboard'
-                                }}
-                                depth={0}
-                                sidebarOpen={open}
-                            />
+                            <div className="mt-6 flex flex-col gap-1">
+                                {/* Dashboard */}
+                                {can('dashboard') && (
+                                    <TreeNode
+                                        node={{
+                                            label: 'Dashboard',
+                                            icon: LayoutDashboard,
+                                            path: '/dashboard'
+                                        }}
+                                        depth={0}
+                                        sidebarOpen={open}
+                                    />
+                                )}
 
-                            {/* Divider */}
-                            {open && <div className="h-px bg-gray-200 dark:bg-gray-700 my-3" />}
-                            {!open && <div className="h-px bg-gray-200 dark:bg-gray-700 w-8 mx-auto my-4" />}
+                                {/* Divider */}
+                                {open && <div className="h-px bg-gray-200 dark:bg-gray-700 my-3" />}
+                                {!open && <div className="h-px bg-gray-200 dark:bg-gray-700 w-8 mx-auto my-4" />}
 
-                            {/* BSP / ODHC / General Forms tree */}
-                            {tree.map((rootNode, idx) => (
-                                <TreeNode key={idx} node={rootNode} depth={0} sidebarOpen={open} />
-                            ))}
+                                {/* BSP / ODHC / General Forms tree */}
+                                {filteredTree.map((rootNode, idx) => (
+                                    <TreeNode key={idx} node={rootNode} depth={0} sidebarOpen={open} />
+                                ))}
 
-                            {/* Inventory section */}
-                            {canManageInventory && canManageInventory() && (
-                                <>
-                                    {open && <div className="h-px bg-gray-200 dark:bg-gray-700 my-3" />}
-                                    {!open && <div className="h-px bg-gray-200 dark:bg-gray-700 w-8 mx-auto my-4" />}
-                                    {open && (
-                                        <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest px-2 mb-1">
-                                            Inventory
-                                        </p>
-                                    )}
-                                    <TreeNode node={{ label: 'Inventory Management', icon: Package, path: '/inventory' }} depth={0} sidebarOpen={open} />
-                                    <TreeNode node={{ label: 'Deployed Assets', icon: Monitor, path: '/deployed-assets' }} depth={0} sidebarOpen={open} />
-                                </>
-                            )}
+                                {/* Inventory section */}
+                                {canManageInventory && canManageInventory() && (can('inventory') || can('deployed_assets')) && (
+                                    <>
+                                        {open && <div className="h-px bg-gray-200 dark:bg-gray-700 my-3" />}
+                                        {!open && <div className="h-px bg-gray-200 dark:bg-gray-700 w-8 mx-auto my-4" />}
+                                        {open && (
+                                            <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest px-2 mb-1">
+                                                Inventory
+                                            </p>
+                                        )}
+                                        {can('inventory') && <TreeNode node={{ label: 'Inventory Management', icon: Package, path: '/inventory' }} depth={0} sidebarOpen={open} />}
+                                        {can('deployed_assets') && <TreeNode node={{ label: 'Deployed Assets', icon: Monitor, path: '/deployed-assets' }} depth={0} sidebarOpen={open} />}
+                                    </>
+                                )}
 
-                            {/* Administration section (admin only) */}
-                            {(canManageUsers() || isAdmin()) && (
-                                <>
-                                    {open && <div className="h-px bg-gray-200 dark:bg-gray-700 my-3" />}
-                                    {!open && <div className="h-px bg-gray-200 dark:bg-gray-700 w-8 mx-auto my-4" />}
-                                    {open && (
-                                        <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest px-2 mb-1">
-                                            Administration
-                                        </p>
-                                    )}
-                                    {canManageUsers() && (
-                                        <TreeNode node={{ label: 'Manage Users', icon: Users, path: '/users' }} depth={0} sidebarOpen={open} />
-                                    )}
-                                    {isAdmin() && (
-                                        <>
-                                            <TreeNode node={{ label: 'Departments', icon: Building, path: '/departments' }} depth={0} sidebarOpen={open} />
-                                            <TreeNode node={{ label: 'Workflows', icon: Settings, path: '/settings/workflows' }} depth={0} sidebarOpen={open} />
-                                            <TreeNode node={{ label: 'Approval Matrix', icon: FileStack, path: '/settings/approval-matrix' }} depth={0} sidebarOpen={open} />
-                                            <TreeNode node={{ label: 'Audit Logs', icon: Shield, path: '/audit-logs' }} depth={0} sidebarOpen={open} />
-                                        </>
-                                    )}
-                                </>
+                                {/* Administration section (admin only) */}
+                                {(canManageUsers() || isAdmin()) && (
+                                    <>
+                                        {open && <div className="h-px bg-gray-200 dark:bg-gray-700 my-3" />}
+                                        {!open && <div className="h-px bg-gray-200 dark:bg-gray-700 w-8 mx-auto my-4" />}
+                                        {open && (
+                                            <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest px-2 mb-1">
+                                                Administration
+                                            </p>
+                                        )}
+                                        {canManageUsers() && can('users') && (
+                                            <TreeNode node={{ label: 'Manage Users', icon: Users, path: '/users' }} depth={0} sidebarOpen={open} />
+                                        )}
+                                        {isAdmin() && (
+                                            <>
+                                                {can('workflow_setup') && <TreeNode node={{ label: 'Workflow Setup', icon: GitBranch, path: '/settings/workflow-setup' }} depth={0} sidebarOpen={open} />}
+                                                {can('departments') && <TreeNode node={{ label: 'Departments', icon: Building, path: '/departments' }} depth={0} sidebarOpen={open} />}
+                                                {can('workflows') && <TreeNode node={{ label: 'Workflows', icon: Settings, path: '/settings/workflows' }} depth={0} sidebarOpen={open} />}
+                                                {can('approval_matrix') && <TreeNode node={{ label: 'Approval Matrix', icon: FileStack, path: '/settings/approval-matrix' }} depth={0} sidebarOpen={open} />}
+                                                {can('audit_logs') && <TreeNode node={{ label: 'Audit Logs', icon: Shield, path: '/audit-logs' }} depth={0} sidebarOpen={open} />}
+                                                {can('role_access') && <TreeNode node={{ label: 'Role Access Config', icon: Lock, path: '/settings/role-access' }} depth={0} sidebarOpen={open} />}
+                                                {isAdmin() && <TreeNode node={{ label: 'API Keys', icon: KeyRound, path: '/settings/api-keys' }} depth={0} sidebarOpen={open} />}
+                                            </>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div>
+                            <button onClick={toggleTheme} className="flex items-center justify-start gap-2 group/sidebar py-2 w-full mb-2">
+                                {theme === 'dark'
+                                    ? <Sun className="text-gray-700 dark:text-gray-200 h-5 w-5 flex-shrink-0" />
+                                    : <Moon className="text-gray-700 dark:text-gray-200 h-5 w-5 flex-shrink-0" />}
+                                <motion.span
+                                    animate={{ display: open ? "inline-block" : "none", opacity: open ? 1 : 0 }}
+                                    className="text-gray-700 dark:text-gray-200 text-sm group-hover/sidebar:translate-x-1 transition duration-150 whitespace-pre inline-block !p-0 !m-0"
+                                >
+                                    {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+                                </motion.span>
+                            </button>
+
+                            <button onClick={handleLogout} className="flex items-center justify-start gap-2 group/sidebar py-2 w-full">
+                                <LogOut className="text-gray-700 dark:text-gray-200 h-5 w-5 flex-shrink-0" />
+                                <motion.span
+                                    animate={{ display: open ? "inline-block" : "none", opacity: open ? 1 : 0 }}
+                                    className="text-gray-700 dark:text-gray-200 text-sm group-hover/sidebar:translate-x-1 transition duration-150 whitespace-pre inline-block !p-0 !m-0"
+                                >
+                                    Logout
+                                </motion.span>
+                            </button>
+
+                            {user && (
+                                <div className="mt-4 flex items-center gap-2">
+                                    <div className="h-8 w-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold flex-shrink-0">
+                                        {user.firstName ? user.firstName[0] : 'U'}
+                                    </div>
+                                    <motion.div
+                                        animate={{ display: open ? "block" : "none", opacity: open ? 1 : 0 }}
+                                        className="flex-1 min-w-0"
+                                    >
+                                        <div className="text-sm font-medium text-gray-900 dark:text-white truncate">{user.fullName}</div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                            {user.role ? user.role.replace(/_/g, ' ').toUpperCase() : ''}
+                                        </div>
+                                    </motion.div>
+                                </div>
                             )}
                         </div>
-                    </div>
+                    </SidebarBody>
+                </Sidebar>
+            </div>
 
-                    {/* Footer */}
-                    <div>
-                        <button onClick={toggleTheme} className="flex items-center justify-start gap-2 group/sidebar py-2 w-full mb-2">
-                            {theme === 'dark'
-                                ? <Sun className="text-gray-700 dark:text-gray-200 h-5 w-5 flex-shrink-0" />
-                                : <Moon className="text-gray-700 dark:text-gray-200 h-5 w-5 flex-shrink-0" />}
-                            <motion.span
-                                animate={{ display: open ? "inline-block" : "none", opacity: open ? 1 : 0 }}
-                                className="text-gray-700 dark:text-gray-200 text-sm group-hover/sidebar:translate-x-1 transition duration-150 whitespace-pre inline-block !p-0 !m-0"
-                            >
-                                {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-                            </motion.span>
-                        </button>
-
-                        <button onClick={handleLogout} className="flex items-center justify-start gap-2 group/sidebar py-2 w-full">
-                            <LogOut className="text-gray-700 dark:text-gray-200 h-5 w-5 flex-shrink-0" />
-                            <motion.span
-                                animate={{ display: open ? "inline-block" : "none", opacity: open ? 1 : 0 }}
-                                className="text-gray-700 dark:text-gray-200 text-sm group-hover/sidebar:translate-x-1 transition duration-150 whitespace-pre inline-block !p-0 !m-0"
-                            >
-                                Logout
-                            </motion.span>
-                        </button>
-
-                        {user && (
-                            <div className="mt-4 flex items-center gap-2">
-                                <div className="h-8 w-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold flex-shrink-0">
-                                    {user.firstName ? user.firstName[0] : 'U'}
-                                </div>
-                                <motion.div
-                                    animate={{ display: open ? "block" : "none", opacity: open ? 1 : 0 }}
-                                    className="flex-1 min-w-0"
-                                >
-                                    <div className="text-sm font-medium text-gray-900 dark:text-white truncate">{user.fullName}</div>
-                                    <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                        {user.role ? user.role.replace(/_/g, ' ').toUpperCase() : ''}
-                                    </div>
-                                </motion.div>
-                            </div>
-                        )}
-                    </div>
-                </SidebarBody>
-            </Sidebar>
-
-            <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 dark:bg-gray-900">
+            <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 dark:bg-gray-900 print:overflow-visible">
                 <Outlet />
             </main>
         </div>

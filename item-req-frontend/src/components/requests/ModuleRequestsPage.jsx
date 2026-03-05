@@ -6,6 +6,7 @@ import autoTable from 'jspdf-autotable';
 import STC_LOGO from '../../assets/STC_LOGO.png';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
+import { settingsAPI } from '../../services/api';
 import ModuleStatsGrid from '../dashboard/ModuleStats';
 import ModuleTable from '../dashboard/ModuleTable';
 
@@ -40,6 +41,9 @@ const ModuleRequestsPage = ({ moduleConfig }) => {
         currentPage: 1
     });
 
+    // Role UI Config (card visibility)
+    const [roleUIConfig, setRoleUIConfig] = useState(null);
+
     // Effects
     useEffect(() => {
         const handleResize = () => {
@@ -48,6 +52,16 @@ const ModuleRequestsPage = ({ moduleConfig }) => {
         };
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    // Load card visibility config once on mount
+    useEffect(() => {
+        settingsAPI.getRoleUIConfig()
+            .then(res => {
+                const raw = res.data?.value;
+                setRoleUIConfig(typeof raw === 'object' && raw !== null ? raw : {});
+            })
+            .catch(() => setRoleUIConfig({}));
     }, []);
 
     useEffect(() => {
@@ -132,7 +146,7 @@ const ModuleRequestsPage = ({ moduleConfig }) => {
             }
 
             return [
-                req.reference_code || `SVR-${req.id}`,
+                req.reference_code || `SVRF-${req.id}`,
                 req.request_type ? req.request_type.replace(/_/g, ' ').toUpperCase() : '-',
                 req.travel_date_from ? new Date(req.travel_date_from).toLocaleDateString() : '-',
                 req.travel_date_to ? new Date(req.travel_date_to).toLocaleDateString() : '-',
@@ -187,7 +201,16 @@ const ModuleRequestsPage = ({ moduleConfig }) => {
                     </div>
 
                     {/* Stats */}
-                    <ModuleStatsGrid stats={stats} config={moduleConfig} user={user} />
+                    <ModuleStatsGrid
+                        stats={stats}
+                        config={moduleConfig}
+                        user={user}
+                        activeFilter={filters.status || ''}
+                        roleUIConfig={roleUIConfig}
+                        onCardClick={(statusValue) => {
+                            setFilters(prev => ({ ...prev, status: statusValue, page: 1 }));
+                        }}
+                    />
 
                     {/* Toolbar */}
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 space-y-4 sm:space-y-0">
@@ -211,7 +234,7 @@ const ModuleRequestsPage = ({ moduleConfig }) => {
                             )}
                         </div>
 
-                        <div className="relative">
+                        <div className="relative flex items-center gap-2">
                             <Search className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                             <input
                                 type="text"
@@ -220,6 +243,16 @@ const ModuleRequestsPage = ({ moduleConfig }) => {
                                 onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value, page: 1 }))}
                                 className="pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                             />
+                            {filters.status && (
+                                <button
+                                    onClick={() => setFilters(prev => ({ ...prev, status: '', page: 1 }))}
+                                    className="flex items-center gap-1 px-3 py-2 text-xs font-medium bg-primary-100 text-primary-700 border border-primary-300 rounded-md hover:bg-primary-200 whitespace-nowrap"
+                                    title="Clear status filter"
+                                >
+                                    <span>Filtered: {filters.status.replace(/_/g, ' ')}</span>
+                                    <span className="font-bold ml-1">✕</span>
+                                </button>
+                            )}
                         </div>
                     </div>
 

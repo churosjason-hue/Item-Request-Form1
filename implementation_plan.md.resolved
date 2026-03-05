@@ -1,0 +1,38 @@
+
+# Update Service Vehicle Reference Number Format
+
+The user requested changing the Service Vehicle reference number format from `SVR-YYYYMMDD-TTTTTT` to `SVRFYYYY-XXXX` (where XXXX is a 4-digit sequence). It also must start at `SVRF2026-0193`.
+
+## Proposed Changes
+
+### 1. Update Backend Generator
+We will update the [generateReferenceCode] logic inside the controller. Because it needs to check the database for the latest sequence number, it will be made `async`. 
+
+#### [MODIFY] [serviceVehicleRequestController.js]
+- Rename [generateReferenceCode] to an `async` function. 
+- Using Sequelize, it will `findOne` the latest `ServiceVehicleRequest` where `reference_code LIKE 'SVRFYYYY-%'` ordered by [id] descending.
+- If it exists, extract the 4-digit sequence, parse it, and increment by 1.
+- If it doesn't exist, safely default the starting sequence to `191` (as specifically requested for 2026).
+- Return `SVRF${year}-${sequence.padStart(4, '0')}`.
+- Update [createRequest] to use `await generateReferenceCode()`.
+
+#### [MODIFY] [serviceVehicleRequests.js router]
+- Remove the duplicated, unused [generateReferenceCode] function inside the routes file to reduce technical debt.
+
+### 2. Update Frontend Prefix Checks
+The frontend has some hardcoded `SVR` prefix checks inside the tracking page and default display values.
+
+#### [MODIFY] [TrackRequest.jsx]
+- Update `code.startsWith('SVR')` to also allow `code.startsWith('SVRF')`.
+- Update the placeholder text from `SVR-20240106-123456` to the new format `SVRF2026-0191`.
+
+#### [MODIFY] [ModuleRequestsPage.jsx] and [ModuleTable.jsx] and [ServiceVehicleRequestForm.jsx]
+- Update the fallback display logic `req.reference_code || "SVRF" + req.id` to `req.reference_code || "SVRF" + req.id` for consistency on legacy missing codes if any.
+
+## Verification Plan
+
+### Manual Verification
+- Login as requestor. Submit a new Service Vehicle request.
+- Check the generated reference code. It should be `SVRF2026-0193` (or incremented from the highest existing logic if 191 is already taken).
+- Switch to tracking page. Type `SVRF2026-0193` and verify it pulls up the request correctly.
+

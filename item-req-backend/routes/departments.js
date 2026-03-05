@@ -156,9 +156,8 @@ router.post('/', authenticateToken, requireRole('super_administrator'), async (r
     }
 
     // Validate parent department if provided
-    let parentDepartment = null;
     if (parentId) {
-      parentDepartment = await Department.findByPk(parentId);
+      const parentDepartment = await Department.findByPk(parentId);
       if (!parentDepartment) {
         return res.status(400).json({
           error: 'Invalid parent',
@@ -167,14 +166,7 @@ router.post('/', authenticateToken, requireRole('super_administrator'), async (r
       }
     }
 
-    // Determine parent DN for AD if parent department exists
-    let parentDN = null;
-    if (parentDepartment) {
-      // If parent has AD DN, use it; otherwise use base DN
-      parentDN = parentDepartment.ad_dn || null;
-    }
-
-    // Create department in database
+    // Create department in database only (no AD sync)
     const department = await Department.create({
       name: name.trim(),
       description: description?.trim() || name.trim(),
@@ -182,60 +174,12 @@ router.post('/', authenticateToken, requireRole('super_administrator'), async (r
       is_active: true
     });
 
-    // Sync to Active Directory (if enabled)
-    let adSyncResult = null;
-    const adSyncEnabled = process.env.ENABLE_AD_DEPARTMENT_SYNC !== 'false';
-
-    if (adSyncEnabled) {
-      try {
-        const adResult = await ldapService.createOrganizationalUnit(
-          department.name,
-          department.description,
-          parentDN
-        );
-
-        if (adResult.success) {
-          // Update department with AD DN
-          await department.update({
-            ad_dn: adResult.dn,
-            last_ad_sync: new Date()
-          });
-          adSyncResult = { synced: true, message: adResult.message };
-        } else {
-          // OU already exists or creation failed
-          adSyncResult = { synced: false, message: adResult.message, errorType: adResult.errorType };
-          console.warn(`⚠️ AD sync warning for department "${department.name}": ${adResult.message}`);
-        }
-      } catch (adError) {
-        // Log error but don't fail the request - department is created in DB
-        console.error(`❌ AD sync failed for department "${department.name}":`, adError.message);
-
-        // Check if it's a permission error
-        const isPermissionError = adError.message.includes('Permission denied') ||
-          adError.message.includes('INSUFF_ACCESS_RIGHTS');
-
-        adSyncResult = {
-          synced: false,
-          message: adError.message,
-          isPermissionError: isPermissionError
-        };
-      }
-    } else {
-      adSyncResult = { synced: false, message: 'AD sync is disabled', disabled: true };
-    }
-
-    // Audit Log: Department Created
     await logAudit({
       req,
       action: 'CREATE',
       entityType: 'Department',
       entityId: department.id,
-      details: {
-        name: department.name,
-        description: department.description,
-        parentId: department.parent_id,
-        adSync: adSyncResult
-      }
+      details: { name: department.name, description: department.description, parentId: department.parent_id }
     });
 
     res.status(201).json({
@@ -245,9 +189,7 @@ router.post('/', authenticateToken, requireRole('super_administrator'), async (r
         name: department.name,
         description: department.description,
         parentId: department.parent_id,
-        isActive: department.is_active,
-        adDn: department.ad_dn,
-        adSync: adSyncResult
+        isActive: department.is_active
       }
     });
   } catch (error) {
@@ -258,6 +200,7 @@ router.post('/', authenticateToken, requireRole('super_administrator'), async (r
     });
   }
 });
+
 
 // Update department (super admin only)
 router.put('/:id', authenticateToken, requireRole('super_administrator'), async (req, res) => {
@@ -274,7 +217,6 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
       });
     }
 
-    // Validate name if provided
     if (name !== undefined) {
       if (!name || name.trim().length === 0) {
         return res.status(400).json({
@@ -283,12 +225,8 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
         });
       }
 
-      // Check if another department has this name
       const existingDept = await Department.findOne({
-        where: {
-          name: name.trim(),
-          id: { [Op.ne]: id }
-        }
+        where: { name: name.trim(), id: { [Op.ne]: id } }
       });
 
       if (existingDept) {
@@ -299,7 +237,6 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
       }
     }
 
-    // Validate parent department if provided
     if (parentId !== undefined && parentId !== null) {
       if (parentId === id) {
         return res.status(400).json({
@@ -317,207 +254,24 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
       }
     }
 
-    // Prepare update data
+    const oldData = { name: department.name, description: department.description, parent_id: department.parent_id, is_active: department.is_active };
     const updateData = {};
-    const oldName = department.name;
-    const oldDescription = department.description;
-    const oldParentId = department.parent_id;
-    const oldIsActive = department.is_active;
-
     if (name !== undefined) updateData.name = name.trim();
     if (description !== undefined) updateData.description = description?.trim() || name?.trim() || department.name;
     if (parentId !== undefined) updateData.parent_id = parentId;
     if (isActive !== undefined) updateData.is_active = isActive;
 
-    // Sync to Active Directory if department has AD DN or if we're creating one
-    let adSyncResult = null;
-    const adSyncEnabled = process.env.ENABLE_AD_DEPARTMENT_SYNC !== 'false';
-    const needsAdSync = adSyncEnabled && (department.ad_dn || (name !== undefined || description !== undefined || parentId !== undefined));
-
-    if (needsAdSync) {
-      try {
-        if (department.ad_dn) {
-          // Update existing OU in AD
-          let newParentDN = null;
-          if (parentId !== undefined && parentId !== oldParentId) {
-            if (parentId) {
-              const newParent = await Department.findByPk(parentId);
-              newParentDN = newParent?.ad_dn || null;
-            } else {
-              newParentDN = null; // Moving to root
-            }
-          } else if (department.ad_dn) {
-            // Extract parent DN from current DN
-            const currentParentDN = department.ad_dn.substring(department.ad_dn.indexOf(',') + 1);
-            newParentDN = currentParentDN;
-          }
-
-          const adResult = await ldapService.updateOrganizationalUnit(
-            department.ad_dn,
-            name !== undefined ? name.trim() : null,
-            description !== undefined ? description.trim() : null,
-            newParentDN
-          );
-
-          if (adResult.success) {
-            updateData.ad_dn = adResult.dn;
-            updateData.last_ad_sync = new Date();
-            adSyncResult = { synced: true, message: adResult.message, changes: adResult.changes };
-          } else {
-            adSyncResult = { synced: false, message: adResult.message };
-          }
-        } else {
-          // Department doesn't have ad_dn - check if OU exists in AD, otherwise create it
-          let parentDN = null;
-          if (parentId !== undefined && parentId) {
-            const parentDept = await Department.findByPk(parentId);
-            parentDN = parentDept?.ad_dn || null;
-          } else if (oldParentId) {
-            // If removing parent, check old parent location
-            const oldParentDept = await Department.findByPk(oldParentId);
-            parentDN = oldParentDept?.ad_dn || null;
-          }
-
-          const newName = name !== undefined ? name.trim() : department.name;
-          const newDesc = description !== undefined ? description.trim() : department.description;
-          const currentName = department.name;
-
-          // Search for existing OU - try both current name and new name (if different)
-          // Also search in both old and new parent locations
-          let existingOU = null;
-          let foundWithName = null;
-
-          // First, try to find OU with current name in new parent location
-          if (newName === currentName) {
-            existingOU = await ldapService.findOrganizationalUnitDN(currentName, parentDN);
-            foundWithName = currentName;
-          } else {
-            // Name is changing - search for both names
-            existingOU = await ldapService.findOrganizationalUnitDN(currentName, parentDN);
-            if (existingOU) {
-              foundWithName = currentName;
-            } else {
-              // Try new name in case OU was already renamed
-              existingOU = await ldapService.findOrganizationalUnitDN(newName, parentDN);
-              if (existingOU) {
-                foundWithName = newName;
-              }
-            }
-          }
-
-          // If not found in new parent, try old parent location
-          if (!existingOU && oldParentId && parentId !== oldParentId) {
-            const oldParentDept = await Department.findByPk(oldParentId);
-            const oldParentDN = oldParentDept?.ad_dn || null;
-            existingOU = await ldapService.findOrganizationalUnitDN(currentName, oldParentDN);
-            if (existingOU) {
-              foundWithName = currentName;
-              // Update parent DN to old location for now (will be moved if parent changed)
-              parentDN = oldParentDN;
-            }
-          }
-
-          if (existingOU) {
-            // OU exists - update it (may rename if name changed, may move if parent changed)
-            const needsRename = name !== undefined && name.trim() !== foundWithName;
-            const needsMove = parentId !== undefined && parentId !== oldParentId;
-            let newParentDNForUpdate = null;
-
-            if (needsMove) {
-              if (parentId) {
-                const newParent = await Department.findByPk(parentId);
-                newParentDNForUpdate = newParent?.ad_dn || null;
-              } else {
-                newParentDNForUpdate = null; // Moving to root
-              }
-            }
-
-            const adResult = await ldapService.updateOrganizationalUnit(
-              existingOU,
-              needsRename ? name.trim() : null,
-              newDesc !== department.description ? newDesc : null,
-              needsMove ? newParentDNForUpdate : null
-            );
-
-            if (adResult.success) {
-              updateData.ad_dn = adResult.dn || existingOU;
-              updateData.last_ad_sync = new Date();
-              adSyncResult = { synced: true, message: `Found existing OU in AD and updated it: ${adResult.message}`, changes: adResult.changes };
-            } else {
-              // If update fails, at least store the DN we found
-              updateData.ad_dn = existingOU;
-              updateData.last_ad_sync = new Date();
-              adSyncResult = { synced: false, message: `Found existing OU but update failed: ${adResult.message}` };
-            }
-          } else {
-            // OU doesn't exist - create it with the new name
-            const adResult = await ldapService.createOrganizationalUnit(
-              newName,
-              newDesc,
-              parentDN
-            );
-
-            if (adResult.success) {
-              updateData.ad_dn = adResult.dn;
-              updateData.last_ad_sync = new Date();
-              adSyncResult = { synced: true, message: adResult.message };
-            } else if (adResult.errorType === 'exists') {
-              // OU was created between our check and create attempt - try to find and update it
-              const foundOU = await ldapService.findOrganizationalUnitDN(newName, parentDN);
-              if (foundOU) {
-                updateData.ad_dn = foundOU;
-                updateData.last_ad_sync = new Date();
-                adSyncResult = { synced: true, message: `OU already exists in AD, linked to department` };
-              } else {
-                adSyncResult = { synced: false, message: adResult.message, errorType: adResult.errorType };
-              }
-            } else {
-              adSyncResult = { synced: false, message: adResult.message, errorType: adResult.errorType };
-            }
-          }
-        }
-      } catch (adError) {
-        console.error(`❌ AD sync failed for department "${department.name}":`, adError.message);
-
-        // Check if it's a permission error
-        const isPermissionError = adError.message.includes('Permission denied') ||
-          adError.message.includes('INSUFF_ACCESS_RIGHTS');
-
-        adSyncResult = {
-          synced: false,
-          message: adError.message,
-          isPermissionError: isPermissionError
-        };
-        // Continue with DB update even if AD sync fails
-      }
-    } else if (!adSyncEnabled) {
-      adSyncResult = { synced: false, message: 'AD sync is disabled', disabled: true };
-    }
-
-    // Calculate changes for audit log before updating
-    const changes = calculateChanges({
-      name: oldName,
-      description: oldDescription,
-      parent_id: oldParentId,
-      is_active: oldIsActive
-    }, {
-      name: updateData.name,
-      description: updateData.description,
-      parent_id: updateData.parent_id,
-      is_active: updateData.is_active
-    });
-
-    // Update department in database
+    // Update database only (no AD sync)
     await department.update(updateData);
 
-    // Audit Log: Department Updated
+    const changes = calculateChanges(oldData, updateData);
     if (Object.keys(changes).length > 0) {
       await logAudit({
         req,
         action: 'UPDATE',
         entityType: 'Department',
         entityId: department.id,
-        details: { changes, adSync: adSyncResult }
+        details: { changes }
       });
     }
 
@@ -528,9 +282,7 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
         name: department.name,
         description: department.description,
         parentId: department.parent_id,
-        isActive: department.is_active,
-        adDn: department.ad_dn,
-        adSync: adSyncResult
+        isActive: department.is_active
       }
     });
   } catch (error) {
@@ -542,19 +294,17 @@ router.put('/:id', authenticateToken, requireRole('super_administrator'), async 
   }
 });
 
+
 // Delete department (super admin only)
 router.delete('/:id', authenticateToken, requireRole('super_administrator'), async (req, res) => {
   try {
     const { id } = req.params;
 
     const department = await Department.findByPk(id, {
-      include: [{
-        model: User,
-        as: 'Users'
-      }, {
-        model: Department,
-        as: 'SubDepartments'
-      }]
+      include: [
+        { model: User, as: 'Users' },
+        { model: Department, as: 'SubDepartments' }
+      ]
     });
 
     if (!department) {
@@ -580,128 +330,20 @@ router.delete('/:id', authenticateToken, requireRole('super_administrator'), asy
       });
     }
 
-    // Delete from Active Directory (always attempt if AD sync is enabled)
-    let adDeleteResult = null;
-    const adSyncEnabled = process.env.ENABLE_AD_DEPARTMENT_SYNC !== 'false';
+    const departmentDetails = { id: department.id, name: department.name, description: department.description, parentId: department.parent_id };
 
-    if (adSyncEnabled) {
-      try {
-        let ouDN = department.ad_dn;
-
-        // If department doesn't have ad_dn stored, try to find the OU in AD
-        if (!ouDN) {
-          console.log(`⚠️ Department "${department.name}" has no stored AD DN, searching for OU in AD...`);
-
-          // Try to find the OU by name
-          let parentDN = null;
-          if (department.parent_id) {
-            const parentDept = await Department.findByPk(department.parent_id);
-            parentDN = parentDept?.ad_dn || null;
-          }
-
-          ouDN = await ldapService.findOrganizationalUnitDN(department.name, parentDN);
-
-          if (!ouDN) {
-            console.log(`⚠️ OU "${department.name}" not found in AD, proceeding with database deletion only`);
-            adDeleteResult = { deleted: false, message: 'OU not found in AD, deleted from database only' };
-          } else {
-            console.log(`✅ Found OU in AD: ${ouDN}, proceeding with deletion`);
-          }
-        }
-
-        // Delete from AD if we have a DN (either from database or found by search)
-        if (ouDN) {
-          const adResult = await ldapService.deleteOrganizationalUnit(ouDN);
-
-          if (adResult.success) {
-            adDeleteResult = { deleted: true, message: adResult.message };
-            console.log(`✅ Successfully deleted OU from AD: ${ouDN}`);
-          } else if (adResult.notFound) {
-            // OU doesn't exist in AD - proceed with DB deletion
-            adDeleteResult = { deleted: false, message: 'OU not found in AD, deleted from database only' };
-          } else {
-            // Other errors - still proceed with DB deletion but log the error
-            adDeleteResult = { deleted: false, message: adResult.message };
-            console.warn(`⚠️ AD deletion returned error: ${adResult.message}`);
-          }
-        }
-      } catch (adError) {
-        console.error(`❌ AD deletion failed for department "${department.name}":`, adError.message);
-        console.error('Error details:', adError);
-
-        // Check if it's a permission error or has children
-        const isPermissionError = adError.message.includes('Permission denied') ||
-          adError.message.includes('INSUFF_ACCESS_RIGHTS') ||
-          adError.message.includes('Delete organizationalUnit objects');
-        const hasChildren = adError.message.includes('child objects') ||
-          adError.message.includes('not empty') ||
-          adError.message.includes('0000209A'); // LDAP error code for "not empty"
-
-        if (hasChildren) {
-          // The recursive deletion should handle this, but if it still fails, return error
-          return res.status(400).json({
-            error: 'Cannot delete department',
-            message: `Cannot delete OU from AD: ${adError.message}. The OU may contain objects that cannot be deleted.`
-          });
-        }
-
-        // For permission errors, prevent database deletion and return error
-        if (isPermissionError) {
-          return res.status(403).json({
-            error: 'Permission denied',
-            message: `Cannot delete department: ${adError.message}. Please ensure the LDAP service account has the required permissions, or delete the OU manually from Active Directory first.`,
-            details: {
-              serviceAccount: process.env.LDAP_BIND_DN || 'Not configured',
-              requiredPermission: 'Delete organizationalUnit objects',
-              action: 'Please contact your Active Directory administrator to grant delete permissions, or manually delete the OU from AD and then delete the department from the system.'
-            }
-          });
-        }
-
-        // For other errors, warn but allow deletion from DB
-        // (Admin can manually delete from AD later)
-        adDeleteResult = {
-          deleted: false,
-          message: adError.message,
-          warning: 'Department deleted from database, but AD deletion failed. Please delete the OU manually from Active Directory.',
-          isPermissionError: false
-        };
-      }
-    } else {
-      adDeleteResult = { deleted: false, message: 'AD sync is disabled', disabled: true };
-    }
-
-    // Store department details for audit log before deletion
-    const departmentDetails = {
-      id: department.id,
-      name: department.name,
-      description: department.description,
-      adDn: department.ad_dn,
-      parentId: department.parent_id
-    };
-
-    // Delete from database
+    // Delete from database only (no AD sync)
     await department.destroy();
 
-    // Audit Log: Department Deleted
     await logAudit({
       req,
       action: 'DELETE',
       entityType: 'Department',
       entityId: departmentDetails.id,
-      details: {
-        name: departmentDetails.name,
-        description: departmentDetails.description,
-        adDn: departmentDetails.adDn,
-        parentId: departmentDetails.parentId,
-        adDelete: adDeleteResult
-      }
+      details: { name: departmentDetails.name, description: departmentDetails.description, parentId: departmentDetails.parentId }
     });
 
-    res.json({
-      message: 'Department deleted successfully',
-      adDelete: adDeleteResult
-    });
+    res.json({ message: 'Department deleted successfully' });
   } catch (error) {
     console.error('Error deleting department:', error);
     res.status(500).json({
@@ -710,6 +352,7 @@ router.delete('/:id', authenticateToken, requireRole('super_administrator'), asy
     });
   }
 });
+
 
 // Sync department to AD (super admin only)
 router.post('/:id/sync', authenticateToken, requireRole('super_administrator'), async (req, res) => {

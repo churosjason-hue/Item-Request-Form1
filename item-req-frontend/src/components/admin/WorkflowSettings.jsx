@@ -26,11 +26,93 @@ import {
   Calendar,
   ArrowUp,
   ArrowDown,
-  AlertCircle
+  AlertCircle,
+  LayoutDashboard
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { workflowsAPI, REQUEST_STATUSES, settingsAPI } from '../../services/api';
 import api from '../../services/api';
+
+// ── All possible status cards per module per role ──────────────────────────
+const ALL_CARDS = {
+  item_request: {
+    requestor: [
+      { filterStatus: 'draft', title: 'My Drafts' },
+      { filterStatus: 'returned', title: 'Returned' },
+      { filterStatus: 'all_pending', title: 'Pending Approval (combined)' },
+      { filterStatus: 'completed', title: 'Completed' },
+    ],
+    department_approver: [
+      { filterStatus: 'submitted', title: 'Pending My Approval' },
+      { filterStatus: 'department_approved', title: 'Approved by Me' },
+      { filterStatus: 'department_declined', title: 'Declined by Me' },
+      { filterStatus: 'returned', title: 'Returned' },
+      { filterStatus: 'completed', title: 'Completed' },
+      { filterStatus: 'all', title: 'Total Requests' },
+    ],
+    it_manager: [
+      { filterStatus: 'checked_endorsed', title: 'Pending My Approval' },
+      { filterStatus: 'it_manager_approved', title: 'Approved by Me' },
+      { filterStatus: 'it_manager_declined', title: 'Declined by Me' },
+      { filterStatus: 'submitted', title: 'Submitted' },
+      { filterStatus: 'department_approved', title: 'Dept. Approved' },
+      { filterStatus: 'department_declined', title: 'Dept. Declined' },
+      { filterStatus: 'checked_endorsed_card', title: 'Checked & Endorsed' },
+      { filterStatus: 'endorser_declined', title: 'Endorser Declined' },
+      { filterStatus: 'service_desk_processing', title: 'Service Desk Processing' },
+      { filterStatus: 'pr_approved', title: 'PR Approved' },
+      { filterStatus: 'ready_to_deploy', title: 'Ready to Deploy' },
+      { filterStatus: 'returned', title: 'Returned' },
+      { filterStatus: 'completed', title: 'Completed' },
+      { filterStatus: 'cancelled', title: 'Cancelled' },
+      { filterStatus: 'all', title: 'Total Requests' },
+    ],
+    service_desk: [
+      { filterStatus: 'it_manager_approved', title: 'To Process' },
+      { filterStatus: 'service_desk_processing', title: 'Processing' },
+      { filterStatus: 'completed', title: 'Completed' },
+      { filterStatus: 'all', title: 'Total Requests' },
+    ],
+    super_administrator: [
+      { filterStatus: 'all', title: 'All Requests' },
+      { filterStatus: 'all_pending', title: 'Pending (combined)' },
+      { filterStatus: 'completed', title: 'Completed' },
+      { filterStatus: 'all_declined', title: 'Declined (combined)' },
+    ],
+  },
+  vehicle_request: {
+    requestor: [
+      { filterStatus: 'draft', title: 'My Drafts' },
+      { filterStatus: 'returned', title: 'Returned' },
+      { filterStatus: 'submitted', title: 'Pending Approval' },
+      { filterStatus: 'department_approved', title: 'Department Approved' },
+      { filterStatus: 'declined', title: 'Declined' },
+      { filterStatus: 'completed', title: 'Completed' },
+      { filterStatus: 'all', title: 'Total Requests' },
+    ],
+    department_approver: [
+      { filterStatus: 'submitted', title: 'Pending My Approval' },
+      { filterStatus: 'department_approved', title: 'Approved by Me' },
+      { filterStatus: 'returned', title: 'Returned' },
+      { filterStatus: 'declined', title: 'Declined' },
+      { filterStatus: 'completed', title: 'Completed' },
+      { filterStatus: 'all', title: 'Total Requests' },
+    ],
+  },
+};
+
+const MODULE_TABS = [
+  { key: 'item_request', label: 'Item Request', icon: FileText },
+  { key: 'vehicle_request', label: 'Vehicle Request', icon: Car },
+];
+
+const CARD_ROLES = [
+  { value: 'requestor', label: 'Requestor' },
+  { value: 'department_approver', label: 'Dept. Approver' },
+  { value: 'it_manager', label: 'IT Manager' },
+  { value: 'service_desk', label: 'Service Desk' },
+  { value: 'super_administrator', label: 'Super Admin' },
+];
 
 const FORM_TYPES = [
   { value: 'item_request', label: 'Item Request Form', icon: FileText },
@@ -158,6 +240,13 @@ export default function WorkflowSettings() {
   const [expandedWorkflows, setExpandedWorkflows] = useState(new Set());
   const [helloKittyTheme, setHelloKittyTheme] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(true);
+
+  // Dashboard Card Visibility Config
+  const [cardConfig, setCardConfig] = useState(null); // null = not loaded yet
+  const [cardConfigTab, setCardConfigTab] = useState('item_request');
+  const [cardConfigRole, setCardConfigRole] = useState('it_manager');
+  const [savingCardConfig, setSavingCardConfig] = useState(false);
+  const [cardConfigSaved, setCardConfigSaved] = useState(false);
   const [formData, setFormData] = useState({
     form_type: 'item_request',
     department_id: '',
@@ -194,18 +283,33 @@ export default function WorkflowSettings() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [workflowsRes, usersRes, departmentsRes, settingsRes] = await Promise.all([
+      const [workflowsRes, usersRes, departmentsRes] = await Promise.all([
         workflowsAPI.getAll(),
-        workflowsAPI.getAllUsers(), // Use workflow users endpoint to get all users
+        workflowsAPI.getAllUsers(),
         api.get('/departments'),
-        settingsAPI.get('service_desk_theme_enabled')
       ]);
 
       console.log('Workflows response:', workflowsRes.data);
       setWorkflows(workflowsRes.data?.workflows || workflowsRes.data || []);
       setUsers(usersRes.data?.users || usersRes.data || []);
       setDepartments(departmentsRes.data?.departments || departmentsRes.data || []);
-      setHelloKittyTheme(settingsRes.data?.value === true || settingsRes.data?.value === 'true');
+
+      // Settings fetch is optional — don't crash if key doesn't exist
+      try {
+        const settingsRes = await settingsAPI.get('service_desk_theme_enabled');
+        setHelloKittyTheme(settingsRes.data?.value === true || settingsRes.data?.value === 'true');
+      } catch {
+        // Setting not found — silently ignore
+      }
+
+      // Load card visibility config
+      try {
+        const cardRes = await settingsAPI.getRoleUIConfig();
+        const raw = cardRes.data?.value;
+        setCardConfig(typeof raw === 'object' && raw !== null ? raw : {});
+      } catch {
+        setCardConfig({});
+      }
     } catch (error) {
       console.error('Error loading data:', error);
       alert('Failed to load workflow data: ' + (error.response?.data?.message || error.message));
@@ -489,7 +593,8 @@ export default function WorkflowSettings() {
       loadData();
     } catch (error) {
       console.error('Error deleting workflow:', error);
-      alert(error.response?.data?.message || 'Failed to delete workflow');
+      const msg = error.response?.data?.message || 'Failed to delete workflow';
+      alert(msg);
     } finally {
       setLoading(false);
     }
@@ -545,6 +650,52 @@ export default function WorkflowSettings() {
       console.error('Error updating theme setting:', error);
       setHelloKittyTheme(!newValue); // Revert on error
       alert('Failed to update theme setting');
+    }
+  };
+
+  // Card config helpers
+  const getVisibleCards = (module, role) => {
+    return cardConfig?.[module]?.[role] ?? null; // null = show all (default)
+  };
+
+  const isCardVisible = (module, role, filterStatus) => {
+    const visible = getVisibleCards(module, role);
+    if (visible === null) return true; // default: show all
+    return visible.includes(filterStatus);
+  };
+
+  const toggleCard = (module, role, filterStatus) => {
+    setCardConfigSaved(false);
+    setCardConfig(prev => {
+      const current = prev?.[module]?.[role] ??
+        (ALL_CARDS[module]?.[role] || []).map(c => c.filterStatus);
+      const next = current.includes(filterStatus)
+        ? current.filter(s => s !== filterStatus)
+        : [...current, filterStatus];
+      return { ...prev, [module]: { ...(prev?.[module] || {}), [role]: next } };
+    });
+  };
+
+  const resetRoleCards = (module, role) => {
+    setCardConfigSaved(false);
+    setCardConfig(prev => {
+      const updated = { ...(prev?.[module] || {}) };
+      delete updated[role];
+      return { ...prev, [module]: updated };
+    });
+  };
+
+  const saveCardConfig = async () => {
+    setSavingCardConfig(true);
+    try {
+      await settingsAPI.updateRoleUIConfig(cardConfig);
+      setCardConfigSaved(true);
+      setTimeout(() => setCardConfigSaved(false), 2500);
+    } catch (err) {
+      console.error('Failed to save card config:', err);
+      alert('Failed to save. Please try again.');
+    } finally {
+      setSavingCardConfig(false);
     }
   };
 
@@ -606,6 +757,133 @@ export default function WorkflowSettings() {
                 />
               </button>
             </div>
+          </div>
+
+          {/* Dashboard Card Visibility */}
+          <div className="border-t border-gray-200 px-6 pt-6 pb-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <LayoutDashboard className="h-5 w-5 text-blue-600" />
+                <div>
+                  <h3 className="text-md font-medium text-gray-900">Dashboard Card Visibility</h3>
+                  <p className="text-sm text-gray-500">Control which status cards each role sees on their dashboard.</p>
+                </div>
+              </div>
+              <button
+                onClick={saveCardConfig}
+                disabled={savingCardConfig}
+                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${cardConfigSaved
+                    ? 'bg-green-100 text-green-700 border border-green-300'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                  } disabled:opacity-50`}
+              >
+                <Save className="h-4 w-4" />
+                {cardConfigSaved ? 'Saved!' : savingCardConfig ? 'Saving…' : 'Save Changes'}
+              </button>
+            </div>
+
+            {cardConfig === null ? (
+              <p className="text-sm text-gray-400">Loading…</p>
+            ) : (
+              <>
+                {/* Module Tabs */}
+                <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit">
+                  {MODULE_TABS.map(tab => {
+                    const TabIcon = tab.icon;
+                    return (
+                      <button
+                        key={tab.key}
+                        onClick={() => setCardConfigTab(tab.key)}
+                        className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${cardConfigTab === tab.key
+                            ? 'bg-white text-blue-600 shadow-sm'
+                            : 'text-gray-600 hover:text-gray-800'
+                          }`}
+                      >
+                        <TabIcon className="h-4 w-4" />
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Role Tabs */}
+                <div className="flex flex-wrap gap-1 mb-5">
+                  {CARD_ROLES.filter(r => ALL_CARDS[cardConfigTab]?.[r.value]).map(role => (
+                    <button
+                      key={role.value}
+                      onClick={() => setCardConfigRole(role.value)}
+                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${cardConfigRole === role.value
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+                        }`}
+                    >
+                      {role.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Cards Checklist */}
+                {(() => {
+                  const cards = ALL_CARDS[cardConfigTab]?.[cardConfigRole] || [];
+                  const isDefault = getVisibleCards(cardConfigTab, cardConfigRole) === null;
+                  return (
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs text-gray-500 italic">
+                          {isDefault
+                            ? '✓ Using default (all cards shown)'
+                            : `${getVisibleCards(cardConfigTab, cardConfigRole)?.length ?? 0} / ${cards.length} cards enabled`}
+                        </p>
+                        <button
+                          onClick={() => resetRoleCards(cardConfigTab, cardConfigRole)}
+                          className="text-xs text-gray-400 hover:text-red-500 underline"
+                        >
+                          Reset to default
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {cards.map(card => {
+                          const checked = isDefault || isCardVisible(cardConfigTab, cardConfigRole, card.filterStatus);
+                          return (
+                            <label
+                              key={card.filterStatus}
+                              className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-all select-none ${checked
+                                  ? 'border-blue-300 bg-blue-50 text-blue-800'
+                                  : 'border-gray-200 bg-white text-gray-400'
+                                }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  // If currently default (all), initialize with all checked then uncheck this one
+                                  if (isDefault) {
+                                    const all = cards.map(c => c.filterStatus);
+                                    setCardConfig(prev => ({
+                                      ...prev,
+                                      [cardConfigTab]: {
+                                        ...(prev?.[cardConfigTab] || {}),
+                                        [cardConfigRole]: all.filter(s => s !== card.filterStatus)
+                                      }
+                                    }));
+                                    setCardConfigSaved(false);
+                                  } else {
+                                    toggleCard(cardConfigTab, cardConfigRole, card.filterStatus);
+                                  }
+                                }}
+                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              />
+                              <span className="text-sm font-medium">{card.title}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </>
+            )}
           </div>
         </div>
 
@@ -719,6 +997,12 @@ export default function WorkflowSettings() {
                                 <Clock className="w-4 h-4 mr-1.5 opacity-70" />
                                 {workflow.Steps?.length || 0} Steps
                               </span>
+                              {workflow.department_id && (
+                                <span className="flex items-center text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full text-xs font-semibold">
+                                  <Building className="w-3 h-3 mr-1" />
+                                  {workflow.Department?.name || 'Department Specific'}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -900,6 +1184,23 @@ export default function WorkflowSettings() {
                       placeholder="e.g., Standard Item Request Workflow"
                     />
                   </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Department (Optional)
+                    </label>
+                    <select
+                      value={formData.department_id || ''}
+                      onChange={(e) => setFormData({ ...formData, department_id: e.target.value ? parseInt(e.target.value) : '' })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Global (All Departments)</option>
+                      {departments.map(dept => (
+                        <option key={dept.id} value={dept.id}>{dept.name}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">Select to make this workflow specific to one department.</p>
+                  </div>
                 </div>
 
                 <div className="flex items-center space-x-4">
@@ -1026,6 +1327,22 @@ export default function WorkflowSettings() {
                                   <option key={role.value} value={role.value}>{role.label}</option>
                                 ))}
                               </select>
+                            </div>
+                          )}
+
+                          {step.approver_type === 'custom_matrix_role' && (
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Custom Matrix Role Name <span className="text-red-600">*</span>
+                              </label>
+                              <input
+                                type="text"
+                                value={step.approver_role}
+                                onChange={(e) => handleStepChange(index, 'approver_role', e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="e.g., Supervisor"
+                                required
+                              />
                             </div>
                           )}
 

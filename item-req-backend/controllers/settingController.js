@@ -38,6 +38,11 @@ export const updateSetting = async (req, res) => {
             return res.status(403).json({ error: 'Access denied' });
         }
 
+        // Only super_administrator can update role_ui_config
+        if (key === 'role_ui_config' && req.user.role !== 'super_administrator') {
+            return res.status(403).json({ error: 'Only super administrators can update role access configuration' });
+        }
+
         let valueToStore = value;
         if (typeof value === 'object' || typeof value === 'boolean') {
             valueToStore = JSON.stringify(value);

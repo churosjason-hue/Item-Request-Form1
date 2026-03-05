@@ -216,9 +216,9 @@ export async function findApproversForStep(step, requestData = {}, formType = nu
         }
 
         if (targetDeptId) {
-          // NEW LOGIC: Check ApprovalMatrix first
+          // NEW LOGIC: Check ApprovalMatrix first (supports multiple backup users)
           if (formType) {
-            const matrixRule = await ApprovalMatrix.findOne({
+            const matrixRules = await ApprovalMatrix.findAll({
               where: {
                 form_type: formType,
                 department_id: targetDeptId,
@@ -227,11 +227,19 @@ export async function findApproversForStep(step, requestData = {}, formType = nu
               }
             });
 
-            if (matrixRule) {
-              console.log(`   ✅ Found ApprovalMatrix override for this department/role! User ID: ${matrixRule.user_id}`);
-              const matrixUser = await User.findByPk(matrixRule.user_id);
-              if (matrixUser && matrixUser.is_active) {
-                approvers = [matrixUser];
+            if (matrixRules && matrixRules.length > 0) {
+              const ruleUserIds = matrixRules.map(r => r.user_id);
+              console.log(`   ✅ Found ApprovalMatrix override for this department/role! User IDs: ${ruleUserIds.join(', ')}`);
+
+              const matrixUsers = await User.findAll({
+                where: {
+                  id: ruleUserIds,
+                  is_active: true
+                }
+              });
+
+              if (matrixUsers && matrixUsers.length > 0) {
+                approvers = matrixUsers;
                 break; // Skip the default department approver fallback
               }
             }
@@ -254,17 +262,17 @@ export async function findApproversForStep(step, requestData = {}, formType = nu
         let targetMatrixDeptId = null;
 
         if (step.approver_department_id) {
-          targetMatrixDeptId = step.approver_department_id;
+          targetMatrixDeptId = parseInt(step.approver_department_id, 10);
         } else if (step.requires_same_department && requestData.department_id) {
-          targetMatrixDeptId = requestData.department_id;
+          targetMatrixDeptId = parseInt(requestData.department_id, 10);
         } else {
           // Fallback to requestor's department
-          targetMatrixDeptId = requestData.department_id;
+          targetMatrixDeptId = requestData.department_id ? parseInt(requestData.department_id, 10) : null;
         }
 
         if (targetMatrixDeptId && step.approver_role) {
-          // 1. Check ApprovalMatrix explicitly mapped user
-          const matrixRule = await ApprovalMatrix.findOne({
+          // 1. Check ApprovalMatrix explicitly mapped users (supports multiple backups)
+          const matrixRules = await ApprovalMatrix.findAll({
             where: {
               form_type: formType,
               department_id: targetMatrixDeptId,
@@ -273,11 +281,46 @@ export async function findApproversForStep(step, requestData = {}, formType = nu
             }
           });
 
-          if (matrixRule) {
-            console.log(`   ✅ Found ApprovalMatrix override for custom role '${step.approver_role}'! User ID: ${matrixRule.user_id}`);
-            const matrixUser = await User.findByPk(matrixRule.user_id);
-            if (matrixUser && matrixUser.is_active) {
-              approvers = [matrixUser];
+          if (matrixRules && matrixRules.length > 0) {
+            const ruleUserIds = matrixRules.map(r => r.user_id);
+            console.log(`   ✅ Found ApprovalMatrix override for custom role '${step.approver_role}'! User IDs: ${ruleUserIds.join(', ')}`);
+
+            const matrixUsers = await User.findAll({
+              where: {
+                id: ruleUserIds,
+                is_active: true
+              }
+            });
+
+            if (matrixUsers && matrixUsers.length > 0) {
+              approvers = matrixUsers;
+              break;
+            }
+          }
+
+          // 1b. Try global matrix rules (department_id = null) as fallback (supports multiple backups)
+          const globalMatrixRules = await ApprovalMatrix.findAll({
+            where: {
+              form_type: formType,
+              department_id: null,
+              role: step.approver_role,
+              is_active: true
+            }
+          });
+
+          if (globalMatrixRules && globalMatrixRules.length > 0) {
+            const globalRuleUserIds = globalMatrixRules.map(r => r.user_id);
+            console.log(`   ✅ Found GLOBAL ApprovalMatrix rule for role '${step.approver_role}'! User IDs: ${globalRuleUserIds.join(', ')}`);
+
+            const globalMatrixUsers = await User.findAll({
+              where: {
+                id: globalRuleUserIds,
+                is_active: true
+              }
+            });
+
+            if (globalMatrixUsers && globalMatrixUsers.length > 0) {
+              approvers = globalMatrixUsers;
               break;
             }
           }

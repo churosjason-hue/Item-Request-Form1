@@ -111,9 +111,40 @@ const Request = sequelize.define('Request', {
     type: DataTypes.DATE,
     allowNull: true
   },
+  verifier_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: 'User ID of the assigned verifier (e.g. by IT Manager)'
+  },
+  verifier_reason: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Reason for assigning the verifier'
+  },
+  verification_status: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    defaultValue: 'none',
+    comment: 'Status of verification (none, pending, verified, declined)'
+  },
+  verified_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: 'Timestamp when verification action was taken'
+  },
+  verifier_comments: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Comments from the verifier'
+  },
   completed_at: {
     type: DataTypes.DATE,
     allowNull: true
+  },
+  sd_started_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: 'Timestamp when the request first entered service_desk_processing status'
   }
 }, {
   tableName: 'requests',

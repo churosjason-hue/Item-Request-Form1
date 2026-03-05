@@ -164,6 +164,11 @@ const ServiceVehicleRequest = sequelize.define('ServiceVehicleRequest', {
     allowNull: true,
     comment: 'Assigned vehicle ID  '
   },
+  assigned_vehicle_other: {
+    type: DataTypes.STRING(300),
+    allowNull: true,
+    comment: 'Free-text vehicle description when "Other Vehicle" is selected (bypasses availability check)'
+  },
   status: {
     type: DataTypes.STRING(50),
     allowNull: false,

@@ -14,13 +14,13 @@ const ApprovalMatrix = sequelize.define('ApprovalMatrix', {
     },
     department_id: {
         type: DataTypes.INTEGER,
-        allowNull: false,
+        allowNull: true,
         references: {
             model: 'departments',
             key: 'id',
             onDelete: 'CASCADE'
         },
-        comment: 'The specific department this rule applies to'
+        comment: 'The specific department this rule applies to (null for Global rules)'
     },
     role: {
         type: DataTypes.STRING(50),
@@ -50,7 +50,7 @@ const ApprovalMatrix = sequelize.define('ApprovalMatrix', {
     indexes: [
         {
             unique: true,
-            fields: ['form_type', 'department_id', 'role'],
+            fields: ['form_type', 'department_id', 'role', 'user_id'],
             name: 'unique_approval_matrix_rule'
         }
     ]

@@ -15,6 +15,7 @@ import {
   Paperclip,
   X,
   Package,
+  ShieldAlert,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { ToastContext } from "../../contexts/ToastContext";
@@ -32,6 +33,8 @@ import ActionModal from "../common/ActionModal";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ReturnRequestModal from "./ReturnRequestModal";
 import ReplenishmentModal from "../inventory/ReplenishmentModal";
+import VerifierAssignmentModal from "./VerifierAssignmentModal";
+import VerificationResponseModal from "./VerificationResponseModal";
 
 const RequestForm = () => {
   const { id } = useParams();
@@ -134,6 +137,10 @@ const RequestForm = () => {
   });
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnOptions, setReturnOptions] = useState([]);
+
+  // Verifier states
+  const [showAssignVerifierModal, setShowAssignVerifierModal] = useState(false);
+  const [showVerificationModal, setShowVerificationModal] = useState({ isOpen: false, type: 'verify' }); // 'verify' or 'decline'
 
   // Replenishment Modal State
   const [showReplenishmentModal, setShowReplenishmentModal] = useState(false);
@@ -341,13 +348,6 @@ const RequestForm = () => {
   };
 
   useEffect(() => {
-    if (isCreating && user?.role !== "requestor") {
-      toastWarning(
-        "Only users with the requestor role can create equipment requests",
-      );
-      navigate("/dashboard");
-      return;
-    }
     loadData();
     if (isEditing || isViewing) {
       loadRequest();
@@ -416,6 +416,11 @@ const RequestForm = () => {
         requestorSignature: request.requestorSignature || "",
         submittedAt: request.submittedAt,
         createdAt: request.createdAt,
+        verificationStatus: request.verificationStatus || "none",
+        verifierId: request.verifierId || null,
+        verifierReason: request.verifierReason || "",
+        verifiedAt: request.verifiedAt || null,
+        verifierComments: request.verifierComments || "",
         items: request.items.map((item) => ({
           id: item.id,
           category: item.category,
@@ -616,6 +621,44 @@ const RequestForm = () => {
     }
   };
 
+  // Verifier Handlers
+  const handleAssignVerifierClick = () => {
+    setShowAssignVerifierModal(true);
+  };
+
+  const handleAssignVerifier = async (verifierId, reason) => {
+    try {
+      setLoading(true);
+      await requestsAPI.assignVerifier(id, { verifier_id: verifierId, reason });
+      toastSuccess("Verifier assigned successfully");
+      setShowAssignVerifierModal(false);
+      await loadRequest();
+    } catch (err) {
+      toastError(err.response?.data?.message || err.message || "Failed to assign verifier");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyClick = (type) => {
+    setShowVerificationModal({ isOpen: true, type });
+  };
+
+  const handleVerificationSubmit = async (comments) => {
+    try {
+      setLoading(true);
+      const status = showVerificationModal.type === 'verify' ? 'verified' : 'declined';
+      await requestsAPI.verifyRequest(id, { status, comments });
+      toastSuccess(`Request ${status} successfully`);
+      setShowVerificationModal({ isOpen: false, type: 'verify' });
+      await loadRequest();
+    } catch (err) {
+      toastError(err.response?.data?.message || err.message || "Failed to submit verification");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!validateForm()) return;
     try {
@@ -651,6 +694,40 @@ const RequestForm = () => {
         toastWarning(
           `Please approve or reject all ${formData.items.length} items.`,
         );
+        return;
+      }
+
+      // Auto-decline if ALL items were rejected
+      const allRejected = formData.items.every(
+        (item) => item.approvalStatus === "rejected",
+      );
+      if (allRejected) {
+        setActionModalState({
+          isOpen: true,
+          title: "Decline Request",
+          message: allRejected && formData.items.length === 1
+            ? "All items have been rejected. The request will be automatically declined. Please provide a reason:"
+            : "All items have been rejected. The request will be declined. Please provide a reason:",
+          inputLabel: "Decline Reason",
+          inputType: "textarea",
+          confirmText: "Decline",
+          variant: "danger",
+          allowEmpty: false,
+          onConfirm: async (reason) => {
+            setActionModalState((prev) => ({ ...prev, isOpen: false }));
+            try {
+              setLoading(true);
+              await requestsAPI.decline(id, { comments: reason, signature: approvalSignature || null });
+              toastSuccess("Request declined (all items rejected).");
+              navigate("/dashboard");
+            } catch (error) {
+              console.error("Error declining request:", error);
+              toastError(error.response?.data?.message || "Failed to decline request");
+            } finally {
+              setLoading(false);
+            }
+          },
+        });
         return;
       }
     }
@@ -1089,7 +1166,15 @@ const RequestForm = () => {
                   <div className="border-b-2 border-gray-400 print:!border-b-0">
                     <input
                       type="text"
-                      value={user?.title || user?.position || ""}
+                      value={
+                        // When viewing an existing request, show the requestor's actual position
+                        (requestData
+                          ? (requestData.requestor?.title ||
+                            requestData.requestor?.position ||
+                            requestData.requestor?.userPosition ||
+                            "")
+                          : (user?.title || user?.position || ""))
+                      }
                       disabled
                       className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900 print:text-xs"
                     />
@@ -1103,11 +1188,19 @@ const RequestForm = () => {
                     <input
                       type="text"
                       value={
-                        user?.department?.name || user?.Department?.name || ""
+                        // When viewing an existing request, show the request's department
+                        requestData
+                          ? (requestData.department?.name ||
+                            requestData.Department?.name ||
+                            "")
+                          : (user?.department?.name ||
+                            user?.Department?.name ||
+                            "")
                       }
                       disabled
                       className="w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 disabled:opacity-100 disabled:text-gray-900 print:text-xs"
                     />
+
                   </div>
                 </div>
               </div>
@@ -1355,7 +1448,7 @@ const RequestForm = () => {
                                       <CheckCircle className="h-4 w-4" />
                                     </button>
 
-                                    {/* Needs PR button — disabled when item has stock */}
+                                    {/* Needs PR button — always enabled for endorser */}
                                     <button
                                       type="button"
                                       onClick={() =>
@@ -1365,18 +1458,11 @@ const RequestForm = () => {
                                           "needs_pr",
                                         )
                                       }
-                                      disabled={hasStock}
                                       className={`p-1 rounded-full transition-colors ${item.endorserStatus === "needs_pr"
                                         ? "bg-orange-600 text-white shadow-md"
-                                        : hasStock
-                                          ? "bg-gray-100 text-gray-300 cursor-not-allowed"
-                                          : "bg-white text-gray-400 hover:text-orange-600 hover:bg-orange-50"
+                                        : "bg-white text-gray-400 hover:text-orange-600 hover:bg-orange-50"
                                         }`}
-                                      title={
-                                        hasStock
-                                          ? "Item has stock — PR not needed"
-                                          : "Mark as Needs PR"
-                                      }
+                                      title="Mark as Needs PR"
                                     >
                                       <XCircle className="h-4 w-4" />
                                     </button>
@@ -1817,8 +1903,8 @@ const RequestForm = () => {
                       (isViewing &&
                         requestData?.status === "draft" &&
                         requestData?.requestor?.id === user?.id)) &&
-                      (user?.role === "requestor" ||
-                        requestData?.requestor?.id === user?.id) &&
+                      // Show signature button for any user who owns this request
+                      requestData?.requestor?.id === user?.id &&
                       !(
                         formData.requestorSignature ||
                         requestData?.requestorSignature
@@ -1927,207 +2013,237 @@ const RequestForm = () => {
 
                   {/* Approvers Signatures */}
                   {requestData?.approvals &&
-                    [...requestData.approvals]
-                      .sort((a, b) => {
-                        const order = {
-                          department_approval: 1,
-                          endorser_approval: 2,
-                          endorser: 2,
-                          it_manager_approval: 3,
-                          service_desk_processing: 4,
-                        };
-                        return (
-                          (order[a.approval_type] || 99) -
-                          (order[b.approval_type] || 99)
-                        );
-                      })
-                      .map((approval, index, sortedArr) => {
-                        // Only show signature button if:
-                        // 1. Approval status is pending
-                        // 2. User is the approver
-                        // 3. User has permission to approve
-                        // 4. Approval doesn't already have a signature
-                        // 5. Request is not completed
-                        const isPendingApproval = approval.status === "pending";
-                        const isReturnedApproval = approval.status === "returned";
-                        const isCurrentApprover =
-                          approval.approver?.id === user?.id;
-                        const requestNotCompleted =
-                          requestData?.status !== "completed";
-                        // Check if this approval has a signature (from backend or locally updated)
-                        const hasSignature =
-                          approval.signature &&
-                          approval.signature.trim() !== "";
-                        // canReApprove: the approver who previously returned can now re-act
-                        // (request was resubmitted, status is back in an approvable state)
-                        const canReApprove =
-                          isReturnedApproval &&
-                          isCurrentApprover &&
-                          requestNotCompleted &&
-                          (requestData?.permissions?.canApprove ||
-                            requestData?.permissions?.canProcess);
-                        const canSign =
-                          (isPendingApproval || canReApprove) &&
-                          isCurrentApprover &&
-                          requestNotCompleted &&
-                          (requestData?.permissions?.canApprove ||
-                            requestData?.permissions?.canProcess) &&
-                          !hasSignature;
+                    (() => {
+                      // Deduplicate: when the same approver appears more than once
+                      // (e.g. after a return+resubmit they have both a 'returned' and a 'pending' record),
+                      // keep only the most relevant record but preserve the ORIGINAL workflow position
+                      // by tracking the oldest record ID (_sortId) for each approver.
+                      const seen = new Map();
+                      [...requestData.approvals]
+                        .sort((a, b) => a.id - b.id) // process oldest-first so _sortId captures the original slot
+                        .forEach(a => {
+                          const key = Number(a.approver?.id) || a.approval_type;
+                          const existing = seen.get(key);
+                          if (!existing) {
+                            seen.set(key, { ...a, _sortId: a.id });
+                          } else {
+                            // Replace with newer data (pending beats returned), but keep original slot order
+                            seen.set(key, { ...a, _sortId: existing._sortId });
+                          }
+                        });
+                      const dedupedApprovals = Array.from(seen.values())
+                        .sort((a, b) => a._sortId - b._sortId); // maintain original workflow order
 
-                        // ── Visibility gates ──────────────────────────────────
-                        // 1. Hide "returned" approvals UNLESS the current user is
-                        //    the assigned approver who can re-act (request was resubmitted).
-                        if (isReturnedApproval && !canReApprove && !hasSignature) return null;
+                      return dedupedApprovals
+                        .map((approval, index, sortedArr) => {
+                          // Only show signature button if:
+                          // 1. Approval status is pending
+                          // 2. User is the approver
+                          // 3. User has permission to approve
+                          // 4. Approval doesn't already have a signature
+                          // 5. Request is not completed
+                          const isPendingApproval = approval.status === "pending";
+                          const isReturnedApproval = approval.status === "returned";
+                          const isCurrentApprover =
+                            Number(approval.approver?.id) === Number(user?.id);
+                          const requestNotCompleted =
+                            requestData?.status !== "completed";
+                          // Check if this approval has a signature (from backend or locally updated)
+                          const hasSignature =
+                            approval.signature &&
+                            approval.signature.trim() !== "";
+                          // canReApprove: the approver who previously returned can now re-act
+                          // (request was resubmitted, status is back in an approvable state)
+                          const canReApprove =
+                            isReturnedApproval &&
+                            isCurrentApprover &&
+                            requestNotCompleted &&
+                            (requestData?.permissions?.canApprove ||
+                              requestData?.permissions?.canProcess);
+                          const canSign =
+                            (isPendingApproval || canReApprove) &&
+                            isCurrentApprover &&
+                            requestNotCompleted &&
+                            (requestData?.permissions?.canApprove ||
+                              requestData?.permissions?.canProcess) &&
+                            !hasSignature;
 
-                        // 2. Only allow pending-status slots to show if:
-                        //    a) the current user IS that pending approver (canSign), OR
-                        //    b) the approver has already added a signature (hasSignature)
-                        //       — e.g. signed but not yet formally approved
-                        //    All other pending slots are hidden entirely.
-                        if (isPendingApproval && !canSign && !hasSignature) return null;
-                        // ──────────────────────────────────────────────────────
+                          // ── Visibility gates ──────────────────────────────────
+                          // 1. Hide "returned" approvals UNLESS the current user is
+                          //    the assigned approver who can re-act (request was resubmitted).
+                          if (isReturnedApproval && !canReApprove && !hasSignature) return null;
 
-                        const isServiceDesk =
-                          approval.approval_type === "service_desk_processing";
-                        const borderClass =
-                          index === 0
-                            ? "border-r-2 border-gray-300"
-                            : isServiceDesk
-                              ? "border-l-2 border-gray-300 pl-4"
-                              : "";
+                          // 2. Only allow pending-status slots to show if:
+                          //    a) the current user IS that pending approver (canSign), OR
+                          //    b) the approver has already added a signature (hasSignature)
+                          //       — e.g. signed but not yet formally approved
+                          //    All other pending slots are hidden entirely.
+                          if (isPendingApproval && !canSign && !hasSignature) return null;
+                          // ──────────────────────────────────────────────────────
 
-                        return (
-                          <div
-                            key={approval.id}
-                            className={`p-3 ${borderClass}`}
-                          >
-                            {/* Show signature button if current approver can sign */}
-                            {canSign && (
-                              <div className="mb-3">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    // Set the current approval ID and load existing signature if any
-                                    setCurrentApprovalId(approval.id);
-                                    setTempApprovalSignature(
-                                      approval.signature ||
-                                      approvalSignature ||
-                                      "",
-                                    );
-                                    setShowApprovalSignatureModal(true);
-                                  }}
-                                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-semibold"
-                                >
-                                  <PenTool className="h-4 w-4 mr-2" />
-                                  Add Signature
-                                </button>
-                              </div>
-                            )}
+                          // ── Department label logic ─────────────────────────────
+                          // Show dept label only when this approver's dept differs from the previous one
+                          const thisApprovalType = approval.approval_type;
+                          const prevApproval = index > 0 ? sortedArr[index - 1] : null;
+                          const thisDeptName = approval.approver?.Department?.name || null;
+                          const prevDeptName = prevApproval?.approver?.Department?.name || null;
+                          const showDeptLabel = thisDeptName && thisDeptName !== prevDeptName;
 
-                            {/* Display approver info */}
-                            <div className="pb-3 min-h-[100px]">
-                              {/* Department Name Header - Fixed height for alignment (for all approvers), text only for index 1 (Right Side Header) */}
-                              <div className="mb-2 h-4">
-                                {index === 1 &&
-                                  approval.approver?.Department?.name && (
-                                    <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider truncate">
-                                      {approval.approver.Department.name}
-                                    </p>
-                                  )}
-                              </div>
+                          // ── IT-side separator ──────────────────────────────────
+                          // Show a "INFORMATION TECHNOLOGY" divider before the first IT approval
+                          const itTypes = ['it_manager_approval', 'service_desk_processing'];
+                          const isFirstITApproval =
+                            itTypes.includes(thisApprovalType) &&
+                            (index === 0 || !itTypes.includes(sortedArr[index - 1]?.approval_type));
 
-                              {/* Signature above the name - positioned lower left, overlapping slightly */}
-                              {/* Check approval.signature (from backend or locally updated via requestData state) */}
-                              {hasSignature ? (
-                                <div
-                                  className="mb-0"
-                                  style={{
-                                    marginBottom: "-8px",
-                                    textAlign: "left",
-                                  }}
-                                >
-                                  <img
-                                    src={approval.signature}
-                                    alt={`${approval.approver?.fullName || "Approver"} Signature`}
-                                    className="h-auto"
-                                    style={{
-                                      height: "40px",
-                                      maxWidth: "300px",
-                                      objectFit: "contain",
-                                      display: "inline-block",
-                                    }}
-                                  />
-                                </div>
-                              ) : (
-                                !canSign && (
-                                  <div className="mb-1">
-                                    <p className="text-xs text-gray-400 italic">
-                                      (No signature provided)
-                                    </p>
+                          const isServiceDesk =
+                            approval.approval_type === "service_desk_processing";
+
+                          return (
+                            <React.Fragment key={approval.id}>
+                              {/* IT-side separator — shown once before the first IT approval */}
+                              {isFirstITApproval && (
+                                <div className="col-span-full w-full mt-3 mb-2 print:mt-2 print:mb-1">
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex-1 border-t-2 border-blue-200" />
+                                    <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest whitespace-nowrap px-1">
+                                      Information Technology
+                                    </span>
+                                    <div className="flex-1 border-t-2 border-blue-200" />
                                   </div>
-                                )
+                                </div>
                               )}
 
-                              {/* Name below signature - clickable to edit signature if allowed */}
-                              <div className="text-left">
-                                {canEditSignature(false, approval) ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setCurrentApprovalId(approval.id);
-                                      setTempApprovalSignature(
-                                        approval.signature ||
-                                        approvalSignature ||
-                                        "",
-                                      );
-                                      setShowApprovalSignatureModal(true);
-                                    }}
-                                    className="text-sm font-semibold text-gray-900 hover:text-blue-600 hover:underline cursor-pointer transition-colors group relative"
-                                    title="Click to edit signature"
-                                  >
-                                    {approval.approver?.fullName ||
-                                      "Pending Approver"}
-                                    <span className="ml-1 text-xs text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      (edit)
-                                    </span>
-                                  </button>
-                                ) : (
-                                  <p className="text-sm font-semibold text-gray-900">
-                                    {approval.approver?.fullName ||
-                                      "Pending Approver"}
-                                  </p>
-                                )}
-                                {approval.approver?.title && (
-                                  <p className="text-xs text-gray-600 mt-1">
-                                    {approval.approver.title}
-                                  </p>
-                                )}
-
-                                {/* Return Reason */}
-                                {approval.return_reason && (
-                                  <div className="mt-2 px-2 py-1 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 no-print">
-                                    <span className="font-semibold">Return Reason: </span>
-                                    {approval.return_reason}
+                              <div className="p-3">
+                                {/* Show signature button if current approver can sign */}
+                                {canSign && (
+                                  <div className="mb-3">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        // Set the current approval ID and load existing signature if any
+                                        setCurrentApprovalId(approval.id);
+                                        setTempApprovalSignature(
+                                          approval.signature ||
+                                          approvalSignature ||
+                                          "",
+                                        );
+                                        setShowApprovalSignatureModal(true);
+                                      }}
+                                      className="flex items-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-semibold"
+                                    >
+                                      <PenTool className="h-4 w-4 mr-2" />
+                                      Add Signature
+                                    </button>
                                   </div>
                                 )}
 
-                                {/* Decline/Approve Comments */}
-                                {approval.comments && (
-                                  <div className={`mt-2 px-2 py-1 rounded text-xs no-print ${approval.status === "declined"
-                                    ? "bg-red-50 border border-red-200 text-red-800"
-                                    : "bg-blue-50 border border-blue-200 text-blue-800"
-                                    }`}>
-                                    <span className="font-semibold">
-                                      {approval.status === "declined" ? "Decline Reason: " : "Comments: "}
-                                    </span>
-                                    {approval.comments}
+                                {/* Display approver info */}
+                                <div className="pb-3 min-h-[100px]">
+                                  {/* Department Name Header — only shows when dept changes */}
+                                  <div className="mb-2 h-4">
+                                    {showDeptLabel && (
+                                      <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider truncate">
+                                        {thisDeptName}
+                                      </p>
+                                    )}
                                   </div>
-                                )}
+
+
+                                  {/* Signature above the name - positioned lower left, overlapping slightly */}
+                                  {/* Check approval.signature (from backend or locally updated via requestData state) */}
+                                  {hasSignature ? (
+                                    <div
+                                      className="mb-0"
+                                      style={{
+                                        marginBottom: "-8px",
+                                        textAlign: "center",
+                                      }}
+                                    >
+                                      <img
+                                        src={approval.signature}
+                                        alt={`${approval.approver?.fullName || "Approver"} Signature`}
+                                        className="h-auto"
+                                        style={{
+                                          height: "40px",
+                                          maxWidth: "300px",
+                                          objectFit: "contain",
+                                          display: "inline-block",
+                                        }}
+                                      />
+                                    </div>
+                                  ) : (
+                                    !canSign && (
+                                      <div className="mb-1">
+                                        <p className="text-xs text-gray-400 italic">
+                                          (No signature provided)
+                                        </p>
+                                      </div>
+                                    )
+                                  )}
+
+                                  {/* Name below signature - clickable to edit signature if allowed */}
+                                  <div className="text-center">
+                                    {canEditSignature(false, approval) ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setCurrentApprovalId(approval.id);
+                                          setTempApprovalSignature(
+                                            approval.signature ||
+                                            approvalSignature ||
+                                            "",
+                                          );
+                                          setShowApprovalSignatureModal(true);
+                                        }}
+                                        className="text-sm font-semibold text-gray-900 hover:text-blue-600 hover:underline cursor-pointer transition-colors group relative"
+                                        title="Click to edit signature"
+                                      >
+                                        {approval.approver?.fullName ||
+                                          "Pending Approver"}
+                                        <span className="ml-1 text-xs text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                                          (edit)
+                                        </span>
+                                      </button>
+                                    ) : (
+                                      <p className="text-sm font-semibold text-gray-900">
+                                        {approval.approver?.fullName ||
+                                          "Pending Approver"}
+                                      </p>
+                                    )}
+                                    {approval.approver?.title && (
+                                      <p className="text-xs text-gray-600 mt-1">
+                                        {approval.approver.title}
+                                      </p>
+                                    )}
+
+                                    {/* Return Reason */}
+                                    {approval.return_reason && (
+                                      <div className="mt-2 px-2 py-1 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 no-print">
+                                        <span className="font-semibold">Return Reason: </span>
+                                        {approval.return_reason}
+                                      </div>
+                                    )}
+
+                                    {/* Decline/Approve Comments */}
+                                    {approval.comments && (
+                                      <div className={`mt-2 px-2 py-1 rounded text-xs no-print ${approval.status === "declined"
+                                        ? "bg-red-50 border border-red-200 text-red-800"
+                                        : "bg-blue-50 border border-blue-200 text-blue-800"
+                                        }`}>
+                                        <span className="font-semibold">
+                                          {approval.status === "declined" ? "Decline Reason: " : "Comments: "}
+                                        </span>
+                                        {approval.comments}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+                            </React.Fragment>
+                          );
+                        });
+                    })()}
 
                   {/* Show signature input for current approver who can approve but isn't in approvals list yet */}
                   {isViewing &&
@@ -2136,11 +2252,11 @@ const RequestForm = () => {
                       requestData?.permissions?.canProcess) &&
                     (!requestData?.approvals ||
                       !requestData.approvals.some(
-                        (a) => a.approver?.id === user?.id,
+                        (a) => Number(a.approver?.id) === Number(user?.id),
                       )) && (
                       <div className="p-3">
                         {!approvalSignature && (
-                          <div className="mb-3">
+                          <div className="mb-3 no-print">
                             <button
                               type="button"
                               onClick={() => {
@@ -2241,6 +2357,19 @@ const RequestForm = () => {
                 </div>
               </div>
             </div>
+
+            {/* Verifier Comments Section */}
+            {isViewing && requestData?.verifierComments && (
+              <div className="border border-purple-300 bg-purple-50 p-4 mb-6 rounded">
+                <h3 className="text-sm font-bold text-purple-900 mb-2 flex items-center">
+                  <ShieldAlert className="h-4 w-4 mr-2" />
+                  Verifier Remarks ({requestData.verificationStatus === 'verified' ? 'Verified' : 'Declined'})
+                </h3>
+                <p className="text-sm text-purple-800 whitespace-pre-wrap">
+                  {requestData.verifierComments}
+                </p>
+              </div>
+            )}
 
             {/* Attachments Section - Only visible to IT Manager, Endorser, and Service Desk */}
             {/* Condition: Not Service Desk IN In-Stock Workflow (it_manager_approved AND all available) */}
@@ -2390,12 +2519,22 @@ const RequestForm = () => {
               </div>
             )}
 
+            {/* Print-only: Reference ID footer */}
+            {(isViewing || isEditing) && (
+              <div className="hidden print:block mt-6 pt-3 border-t border-gray-300 text-sm text-gray-600">
+                Reference ID:{" "}
+                <span className="font-bold text-gray-900">
+                  {formData.requestNumber || id}
+                </span>
+              </div>
+            )}
+
             {/* Action Buttons & Footer Info */}
             <div
               className={`flex ${isViewing || isEditing ? "justify-between" : "justify-end"} items-center pt-6 border-t-2 border-gray-400 mt-8 no-print`}
             >
               {(isViewing || isEditing) && (
-                <div className="text-gray-600 font-medium text-sm">
+                <div className="text-gray-600 font-medium text-sm no-print">
                   Reference ID:{" "}
                   <span className="font-bold text-gray-900">
                     {formData.requestNumber || id}
@@ -2440,7 +2579,7 @@ const RequestForm = () => {
                   </button>
                 )}
 
-                {!isViewing && user.role === "requestor" && (
+                {!isViewing && (isCreating || requestData?.requestor?.id === user?.id) && (
                   <>
                     <button
                       type="button"
@@ -2463,6 +2602,40 @@ const RequestForm = () => {
                   </>
                 )}
 
+                {/* Verifier Actions */}
+                {isViewing && formData.verifierId === user?.id && requestData?.verificationStatus === 'pending' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleVerifyClick('decline')}
+                      className="flex items-center px-6 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm font-semibold"
+                    >
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Decline Verification
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleVerifyClick('verify')}
+                      className="flex items-center px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm font-semibold"
+                    >
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Verify Request
+                    </button>
+                  </>
+                )}
+
+                {/* Assign Verifier (IT Manager Only) */}
+                {isViewing && user?.role === 'it_manager' && ['submitted', 'department_approved', 'checked_endorsed', 'pr_approved'].includes(requestData?.status) && !['verified', 'declined'].includes(requestData?.verificationStatus) && (
+                  <button
+                    type="button"
+                    onClick={handleAssignVerifierClick}
+                    className="flex items-center px-6 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm font-semibold"
+                  >
+                    <ShieldAlert className="h-4 w-4 mr-2" />
+                    Assign Verifier
+                  </button>
+                )}
+
                 {(isViewing || isEditing) &&
                   (requestData?.status === "draft" ||
                     formData?.status === "draft") &&
@@ -2477,6 +2650,8 @@ const RequestForm = () => {
                       Delete Draft
                     </button>
                   )}
+
+
 
                 {isViewing &&
                   (requestData?.permissions?.canApprove ||
@@ -2641,19 +2816,40 @@ const RequestForm = () => {
                               item.endorserStatus !== "needs_pr",
                           );
 
+                        const itManagerHasPending =
+                          user?.role === "it_manager" &&
+                          ["department_approved", "checked_endorsed"].includes(requestData?.status) &&
+                          formData.items.some(
+                            (item) => item.approvalStatus === "pending",
+                          );
+
+                        const itManagerAllRejected =
+                          user?.role === "it_manager" &&
+                          ["department_approved", "checked_endorsed"].includes(requestData?.status) &&
+                          formData.items.length > 0 &&
+                          formData.items.every(
+                            (item) => item.approvalStatus === "rejected",
+                          );
+
+                        const isDisabled = loading || endorserHasUnmarked || itManagerHasPending || itManagerAllRejected;
+
                         return (
                           <button
                             type="button"
                             onClick={handleApprove}
-                            disabled={loading || endorserHasUnmarked}
-                            className={`flex items-center px-6 py-2 text-white rounded text-sm font-semibold ${endorserHasUnmarked
+                            disabled={isDisabled}
+                            className={`flex items-center px-6 py-2 text-white rounded text-sm font-semibold ${isDisabled
                               ? "bg-green-600 opacity-50 cursor-not-allowed"
-                              : "bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                              : "bg-green-600 hover:bg-green-700"
                               }`}
                             title={
                               endorserHasUnmarked
                                 ? 'Mark all items as "Item Has Stock" or "Needs PR" first'
-                                : undefined
+                                : itManagerHasPending
+                                  ? 'Please approve or reject all items first'
+                                  : itManagerAllRejected
+                                    ? 'All items rejected — use the Decline button instead'
+                                    : undefined
                             }
                           >
                             <CheckCircle className="h-4 w-4 mr-2" />
@@ -2745,6 +2941,21 @@ const RequestForm = () => {
         message={confirmDialogState.message}
         variant={confirmDialogState.variant}
         confirmText={confirmDialogState.confirmText}
+      />
+
+      <VerifierAssignmentModal
+        isOpen={showAssignVerifierModal}
+        onClose={() => setShowAssignVerifierModal(false)}
+        onAssign={handleAssignVerifier}
+        loading={loading}
+      />
+
+      <VerificationResponseModal
+        isOpen={showVerificationModal.isOpen}
+        onClose={() => setShowVerificationModal({ isOpen: false, type: 'verify' })}
+        onConfirm={handleVerificationSubmit}
+        action={showVerificationModal.type}
+        loading={loading}
       />
 
       <ReturnRequestModal

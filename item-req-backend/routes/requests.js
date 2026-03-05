@@ -21,7 +21,9 @@ import {
   uploadAttachments,
   deleteAttachment,
   approvePR,
-  readyToDeploy
+  readyToDeploy,
+  assignVerifier,
+  verifyRequest
 } from '../controllers/requestController.js';
 
 const router = express.Router();
@@ -130,5 +132,10 @@ router.post('/:id/ready-to-deploy', authenticateToken, readyToDeploy);
 // Public endpoint: Track request by ticket code (no authentication required)
 router.get('/public/track/:ticketCode', trackRequest);
 
-export default router;
+// Assign Verifier (Department Approver / IT Manager)
+router.post('/:id/assign-verifier', authenticateToken, assignVerifier);
 
+// Verify Request (Assigned Verifier)
+router.post('/:id/verify', authenticateToken, verifyRequest);
+
+export default router;

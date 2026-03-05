@@ -311,7 +311,7 @@ router.get("/", authenticateToken, getAllRequests);
 // Check vehicle and driver availability
 router.get("/availability", authenticateToken, async (req, res) => {
   try {
-    const { startDate, endDate, pickupTime, dropoffTime } = req.query;
+    const { startDate, endDate, pickupTime, dropoffTime, currentRequestId } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -319,6 +319,9 @@ router.get("/availability", authenticateToken, async (req, res) => {
         message: "Start date and end date are required"
       });
     }
+
+    console.log(`\n--- AVAILABILITY CHECK ---`);
+    console.log(`Query: ${startDate} to ${endDate} | Times: ${pickupTime} - ${dropoffTime} | Exclude ID: ${currentRequestId}`);
 
     // Helper to normalize time to HH:mm:ss
     const normalizeTime = (t) => {
@@ -344,19 +347,26 @@ router.get("/availability", authenticateToken, async (req, res) => {
 
     // Find POTENTIAL conflicting requests (Date Overlap)
     // We filter roughly by date first to minimize JS processing
-    const roughConflicts = await ServiceVehicleRequest.findAll({
-      where: {
-        status: {
-          [Op.notIn]: ['draft', 'declined', 'cancelled']
-        },
-        [Op.and]: [
-          // Overlap logic: (StartA <= EndB) and (EndA >= StartB)
-          { travel_date_from: { [Op.lte]: endDate } },
-          { travel_date_to: { [Op.gte]: startDate } }
-        ]
+    const whereClause = {
+      status: {
+        [Op.notIn]: ['draft', 'declined', 'cancelled']
       },
+      [Op.and]: [
+        // Overlap logic: (StartA <= EndB) and (EndA >= StartB)
+        { travel_date_from: { [Op.lte]: endDate } },
+        { travel_date_to: { [Op.gte]: startDate } }
+      ]
+    };
+
+    if (currentRequestId && currentRequestId !== 'null' && currentRequestId !== 'undefined') {
+      whereClause.id = { [Op.ne]: currentRequestId };
+    }
+
+    const roughConflicts = await ServiceVehicleRequest.findAll({
+      where: whereClause,
       attributes: [
         'id',
+        'reference_code',
         'assigned_vehicle',
         'assigned_driver',
         'travel_date_from',
@@ -367,15 +377,34 @@ router.get("/availability", authenticateToken, async (req, res) => {
     });
 
     // Refine conflicts with Time Check
+    // Helper to safely get YYYY-MM-DD from Sequelize Date objects which might be shifted
+    const getLocalDateStr = (dateObj) => {
+      if (!dateObj) return '';
+      if (typeof dateObj === 'string') return dateObj.split('T')[0];
+      const offset = dateObj.getTimezoneOffset();
+      return new Date(dateObj.getTime() - (offset * 60 * 1000)).toISOString().split('T')[0];
+    };
+
     const confirmedConflicts = roughConflicts.filter(req => {
       // If request has no time set, assume it takes the full day(s) it spans
-      const reqStartStr = `${req.travel_date_from}T${normalizeTime(req.pick_up_time) || '00:00:00'}`;
-      const reqEndStr = `${req.travel_date_to}T${normalizeTime(req.drop_off_time) || '23:59:59'}`;
+      const fromStr = getLocalDateStr(req.travel_date_from);
+      const toStr = getLocalDateStr(req.travel_date_to);
+
+      const reqStartStr = `${fromStr}T${normalizeTime(req.pick_up_time) || '00:00:00'}`;
+      const reqEndStr = `${toStr}T${normalizeTime(req.drop_off_time) || '23:59:59'}`;
 
       const reqStart = new Date(reqStartStr);
       const reqEnd = new Date(reqEndStr);
 
       const isOverlapping = queryStart < reqEnd && queryEnd > reqStart;
+
+      console.log(`  Comparing with Req #${req.id} (Vehicle: ${req.assigned_vehicle}):`);
+      console.log(`    DB Dates:   ${reqStartStr} to ${reqEndStr}`);
+      console.log(`    Parsed Dts: ${reqStart.toISOString()} to ${reqEnd.toISOString()}`);
+      console.log(`    Query Dts:  ${queryStart.toISOString()} to ${queryEnd.toISOString()}`);
+      console.log(`    queryStart < reqEnd: ${queryStart < reqEnd}`);
+      console.log(`    queryEnd > reqStart: ${queryEnd > reqStart}`);
+      console.log(`    => OVERLAPPING: ${isOverlapping}`);
 
       // Check overlap: StartA < EndB && EndA > StartB
       return isOverlapping;
@@ -396,23 +425,97 @@ router.get("/availability", authenticateToken, async (req, res) => {
     const allVehicles = await Vehicle.findAll();
     const allDrivers = await Driver.findAll();
 
-    // Filter out booked resources
-    // For vehicles, we match by ID
-    const availableVehicles = allVehicles.filter(v => !bookedVehicleIds.includes(v.id));
+    // Build map: vehicleId -> conflict info  
+    const vehicleConflictMap = {};
+    conflictingRequests.forEach(r => {
+      if (r.assigned_vehicle) {
+        vehicleConflictMap[r.assigned_vehicle] = {
+          reference_code: r.reference_code || `#${r.id}`,
+          from: getLocalDateStr(r.travel_date_from),
+          to: getLocalDateStr(r.travel_date_to),
+          pick_up_time: r.pick_up_time || null,
+          drop_off_time: r.drop_off_time || null,
+        };
+      }
+    });
 
-    // For drivers, we match by Name (case insensitive for safety)
+    // Split all vehicles into available and unavailable based on booking conflicts
+    const availableVehiclesRaw = allVehicles.filter(v => !bookedVehicleIds.includes(v.id));
+    const unavailableVehicles = allVehicles
+      .filter(v => bookedVehicleIds.includes(v.id))
+      .map(v => ({ ...v.toJSON(), conflict: vehicleConflictMap[v.id] || null }));
+
+    // Filter out booked drivers (matched by name, case-insensitive)
     const availableDrivers = allDrivers.filter(d => {
-      const isBooked = bookedDriverNames.some(bookedName =>
-        bookedName.toLowerCase() === d.name.toLowerCase()
-      );
-      return !isBooked;
+      return !bookedDriverNames.some(booked => booked.toLowerCase() === d.name.toLowerCase());
+    });
+
+    // ── UVVRP (Unified Vehicular Volume Reduction Program) Coding Check ──
+    // Peak hours: 7:00 AM–10:00 AM and 5:00 PM–8:00 PM, Mon–Fri (excluding holidays)
+    // Window hour: 10:01 AM–4:59 PM — coding NOT enforced
+    const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const UVVRP_WEEKDAYS = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']);
+
+    // Optional holiday list from query param (comma-separated YYYY-MM-DD strings)
+    const holidayList = req.query.holidays
+      ? req.query.holidays.split(',').map(h => h.trim()).filter(Boolean)
+      : [];
+
+    // Parse startDate to get day of week (use UTC to match stored YYYY-MM-DD)
+    const travelStartDate = new Date(`${startDate}T00:00:00Z`);
+    const travelDayName = WEEKDAY_NAMES[travelStartDate.getUTCDay()];
+
+    // Parse pick-up time into total minutes (returns null if no time)
+    const parseTimeToMins = (t) => {
+      if (!t) return null;
+      const norm = normalizeTime(t); // "HH:mm:ss"
+      if (!norm) return null;
+      const [h, m] = norm.split(':').map(Number);
+      return h * 60 + m;
+    };
+
+    const pickupMins = parseTimeToMins(pickupTime);
+
+    const getUvvrpStatus = (vehicle) => {
+      if (!vehicle.coding_sched || vehicle.coding_sched !== travelDayName) return 'none';
+      if (!UVVRP_WEEKDAYS.has(travelDayName)) return 'none';
+      if (holidayList.includes(startDate)) return 'none'; // Holiday exemption
+
+      // If the request spans over a day, it's more complex — but check start time for initial status
+      if (pickupMins === null) return 'peak'; // No time given → assume peak (worst case)
+
+      // Window hour: 10:01 AM (601 mins) to 4:59 PM (1019 mins) — NOT restricted
+      if (pickupMins >= 601 && pickupMins <= 1019) return 'window';
+
+      // Peak hours: 7:00 AM (420) to 10:00 AM (600) and 5:00 PM (1020) to 8:00 PM (1200)
+      if ((pickupMins >= 420 && pickupMins <= 600) || (pickupMins >= 1020 && pickupMins <= 1200)) return 'peak';
+
+      return 'none'; // Before 7 AM or after 8 PM — no restriction
+    };
+
+    // Apply UVVRP flags to available vehicles (don't remove — ODHC can still override)
+    const availableVehicles = availableVehiclesRaw.map(v => {
+      const vJson = v.toJSON ? v.toJSON() : v;
+      const uvvrpStatusVal = getUvvrpStatus(vJson);
+      return {
+        ...vJson,
+        uvvrpStatus: uvvrpStatusVal,
+        codingRestricted: uvvrpStatusVal === 'peak',
+      };
     });
 
     res.json({
       success: true,
       availableVehicles,
+      unavailableVehicles,
       availableDrivers,
-      conflictingCount: confirmedConflicts.length
+      conflictingCount: confirmedConflicts.length,
+      uvvrp: {
+        travelDay: travelDayName,
+        pickupMins,
+        isWeekday: UVVRP_WEEKDAYS.has(travelDayName),
+        isHoliday: holidayList.includes(startDate),
+      }
     });
   } catch (error) {
     console.error("Error checking availability:", error);

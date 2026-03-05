@@ -102,7 +102,7 @@ export const validateServiceVehicleForm = (formData) => {
   // Conditional validations based on request type
   const requestType = formData.request_type;
 
-  if (["drop_passenger", "pickup_passenger", "pickup_item", "delivery_item"].includes(requestType)) {
+  if (["drop_passenger_only", "passenger_pickup_only", "item_pickup", "item_delivery", "point_to_point_service"].includes(requestType)) {
     if (!formData.pick_up_location?.trim()) {
       errors.pick_up_location = "Pick-up location is required";
     }
@@ -114,16 +114,19 @@ export const validateServiceVehicleForm = (formData) => {
     }
   }
 
-  if (["drop_passenger", "pickup_item", "delivery_item"].includes(requestType)) {
+  if (["drop_passenger_only", "item_pickup", "item_delivery", "point_to_point_service"].includes(requestType)) {
     if (!formData.drop_off_time) {
       errors.drop_off_time = "Drop-off time is required";
     }
   }
 
-  if (requestType === "point_to_point") {
+  if (requestType !== "car_only" && requestType) {
     if (!formData.destination?.trim()) {
       errors.destination = "Destination is required";
     }
+  }
+
+  if (requestType === "point_to_point_service") {
     if (!formData.departure_time) {
       errors.departure_time = "Departure time is required";
     }
@@ -157,7 +160,7 @@ export const validateServiceVehicleForm = (formData) => {
   }
 
   // Passengers validation
-  if (["drop_passenger", "pickup_passenger"].includes(requestType)) {
+  if (["drop_passenger_only", "passenger_pickup_only"].includes(requestType)) {
     if (!formData.passengers || formData.passengers.length === 0) {
       errors.passengers = "At least one passenger is required";
     } else {

@@ -85,8 +85,10 @@ export const usersAPI = {
   getAll: (params) => api.get('/users', { params }),
   getById: (id) => api.get(`/users/${id}`),
   updateRole: (id, role) => api.patch(`/users/${id}/role`, { role }),
+  updateCustomRoles: (id, customRoles) => api.patch(`/users/${id}/custom-roles`, { customRoles }),
   updateStatus: (id, isActive) => api.patch(`/users/${id}/status`, { isActive }),
   updateDepartment: (id, departmentName) => api.patch(`/users/${id}/department`, { departmentName }),
+  assignDepartment: (id, departmentId) => api.patch(`/users/${id}/assign-department`, { departmentId }),
   syncAll: () => api.post('/users/sync'),
   syncUser: (username) => api.post(`/users/${username}/sync`),
   getSyncStatus: () => api.get('/users/sync/status'),
@@ -128,6 +130,8 @@ export const requestsAPI = {
   deleteAttachment: (id, index) => api.delete(`/requests/${id}/attachments/${index}`),
   approvePR: (id, data) => api.post(`/requests/${id}/approve-pr`, data),
   readyToDeploy: (id) => api.post(`/requests/${id}/ready-to-deploy`),
+  assignVerifier: (id, data) => api.post(`/requests/${id}/assign-verifier`, data),
+  verifyRequest: (id, data) => api.post(`/requests/${id}/verify`, data)
 };
 
 // Equipment categories for the form
@@ -201,7 +205,7 @@ export const serviceVehicleRequestsAPI = {
     }
   }),
   deleteAttachment: (id, filename) => api.delete(`/service-vehicle-requests/${id}/attachments/${filename}`),
-  checkAvailability: (startDate, endDate, pickupTime, dropoffTime) => api.get(`/service-vehicle-requests/availability`, { params: { startDate, endDate, pickupTime, dropoffTime } }),
+  checkAvailability: (startDate, endDate, pickupTime, dropoffTime, currentRequestId) => api.get(`/service-vehicle-requests/availability`, { params: { startDate, endDate, pickupTime, dropoffTime, currentRequestId } }),
   assignVerifier: (id, data) => api.post(`/service-vehicle-requests/${id}/assign-verifier`, data),
   verifyRequest: (id, data) => api.post(`/service-vehicle-requests/${id}/verify`, data)
 }
@@ -260,7 +264,9 @@ export const auditLogsAPI = {
 export const settingsAPI = {
   get: (key) => api.get(`/settings/${key}`),
   update: (key, value) => api.put(`/settings/${key}`, { value }),
-  getGeneralPurposes: () => api.get('/settings/general-purposes')
+  getGeneralPurposes: () => api.get('/settings/general-purposes'),
+  getRoleUIConfig: () => api.get('/settings/role_ui_config'),
+  updateRoleUIConfig: (config) => api.put('/settings/role_ui_config', { value: config }),
 };
 
 // Approval Matrix API

@@ -1,6 +1,7 @@
 import { Op } from 'sequelize';
 import { validationResult } from 'express-validator';
-import { Request, RequestItem, Approval, User, Department, Category, AuditLog, sequelize } from '../models/index.js';
+import { Request, RequestItem, Approval, User, Department, Category, AuditLog, ApprovalMatrix, sequelize } from '../models/index.js';
+
 import { processWorkflowOnSubmit, findCurrentStepForApprover, processWorkflowOnApproval, checkStepCompletion } from '../utils/workflowProcessor.js';
 import { logAudit, calculateChanges } from '../utils/auditLogger.js';
 import emailService from '../utils/emailService.js';
@@ -84,36 +85,183 @@ export const getAllRequests = async (req, res) => {
             // Requestors can only see their own requests
             whereClause.requestor_id = req.user.id;
         } else if (req.user.role === 'department_approver') {
-            // Department approvers can see requests from their department (excluding drafts)
-            whereClause.department_id = req.user.department_id;
+            // DYNAMIC: Find all departments this user is assigned to via ApprovalMatrix
+            // IMPORTANT: filter by form_type 'item_request' so that vehicle_request global
+            // rules (e.g. ODHC approver) don't bleed into item request visibility.
             excludeDrafts = true;
-        } else if (req.user.role === 'it_manager') {
-            // IT Managers: Only see requests that have passed department approval (or are explicitly relevant)
-            // Unless specific status filter is used later, default to "IT Inbox" + "History"
-            if (!status) {
-                // Show everything except drafts and initial submissions (waiting for dept approval)
-                // This ensures we catch ALL intermediate statuses (like 'endorser_approved', 'verified', etc.)
-                whereClause.status = {
-                    [Op.notIn]: ['draft', 'submitted']
-                };
+
+            const matrixRules = await ApprovalMatrix.findAll({
+                where: { user_id: req.user.id, is_active: true, form_type: 'item_request' },
+                attributes: ['department_id']
+            });
+
+            const hasGlobalRule = matrixRules.some(r => r.department_id === null);
+
+            if (hasGlobalRule) {
+                // Global item_request rule — can see requests from all departments
+                console.log(`🌐 User ${req.user.id} has a GLOBAL item_request matrix rule — showing all departments`);
+            } else {
+                // Collect all assigned department IDs from matrix
+                const assignedDeptIds = new Set(
+                    matrixRules.map(r => r.department_id).filter(id => id != null)
+                );
+                // Also include their own registered department
+                if (req.user.department_id) assignedDeptIds.add(req.user.department_id);
+
+                if (assignedDeptIds.size > 0) {
+                    whereClause.department_id = { [Op.in]: Array.from(assignedDeptIds) };
+                    console.log(`🏢 User ${req.user.id} can see departments: ${Array.from(assignedDeptIds).join(', ')}`);
+                } else {
+                    // Fallback: own department only
+                    whereClause.department_id = req.user.department_id;
+                }
             }
-        } else if (['service_desk', 'super_administrator'].includes(req.user.role)) {
-            // Service desk and super admins can see all non-draft requests
+        } else if (req.user.role === 'it_manager' || req.user.role === 'endorser') {
+            // DYNAMIC: Show requests where this user is or was an approver
             excludeDrafts = true;
+            const myApprovals = await Approval.findAll({
+                where: { approver_id: req.user.id },
+                attributes: ['request_id']
+            });
+            const myRequestIds = [...new Set(myApprovals.map(a => a.request_id))];
+            // Also include requests currently pending on this user (pending_approver_ids)
+            // We union both: past approvals + currently pending
+            whereClause[Op.or] = [
+                ...(myRequestIds.length > 0 ? [{ id: { [Op.in]: myRequestIds } }] : []),
+                sequelize.where(
+                    sequelize.literal(`${req.user.id} = ANY(pending_approver_ids)`),
+                    true
+                )
+            ];
+            if (whereClause[Op.or].length === 0) {
+                // No approvals yet — show nothing
+                whereClause.id = -1;
+            }
+        } else if (req.user.role === 'service_desk') {
+            // DYNAMIC: Same as IT Manager — show only assigned requests
+            excludeDrafts = true;
+            const myApprovals = await Approval.findAll({
+                where: { approver_id: req.user.id },
+                attributes: ['request_id']
+            });
+            const myRequestIds = [...new Set(myApprovals.map(a => a.request_id))];
+            whereClause[Op.or] = [
+                ...(myRequestIds.length > 0 ? [{ id: { [Op.in]: myRequestIds } }] : []),
+                sequelize.where(
+                    sequelize.literal(`${req.user.id} = ANY(pending_approver_ids)`),
+                    true
+                )
+            ];
+            if (whereClause[Op.or].length === 0) {
+                whereClause.id = -1;
+            }
+        } else if (req.user.role === 'super_administrator') {
+            // Super administrators see everything (non-draft)
+            excludeDrafts = true;
+        } else {
+            // ── Universal fallback for any other role (e.g. a department_approver who is
+            //    also assigned as 'endorser' via the Approval Matrix) ──────────────────
+            // Show: requests where they are or were an actual approver (Approval log)
+            //       OR where they are currently in pending_approver_ids
+            excludeDrafts = true;
+            const myApprovals = await Approval.findAll({
+                where: { approver_id: req.user.id },
+                attributes: ['request_id']
+            });
+            const myRequestIds = [...new Set(myApprovals.map(a => a.request_id))];
+            whereClause[Op.or] = [
+                ...(myRequestIds.length > 0 ? [{ id: { [Op.in]: myRequestIds } }] : []),
+                sequelize.where(
+                    sequelize.literal(`${req.user.id} = ANY(pending_approver_ids)`),
+                    true
+                )
+            ];
+            if (whereClause[Op.or].length === 0) {
+                whereClause.id = -1; // No activity — show nothing
+            }
         }
+
+        // ── Universal Verifier Visibility ─────────────────────────────────────────
+        // Any user can be assigned as an ad-hoc verifier (verifier_id on Request).
+        // The role-based filter above won't include these requests unless we explicitly
+        // add them. We do this by fetching the verifier's assigned request IDs and
+        // merging them into the existing whereClause via an OR.
+        if (req.user.role !== 'super_administrator') {
+            const verifierRequestIds = (await Request.findAll({
+                where: { verifier_id: req.user.id },
+                attributes: ['id'],
+                raw: true
+            })).map(r => r.id);
+
+            if (verifierRequestIds.length > 0) {
+                const verifierOr = { id: { [Op.in]: verifierRequestIds } };
+                if (whereClause[Op.or]) {
+                    // Already has OR clause (endorser, it_manager, service_desk, fallback)
+                    whereClause[Op.or] = [...whereClause[Op.or], verifierOr];
+                    // If we added a catch-all id=-1 guard, remove it now since we have real IDs
+                    if (whereClause.id === -1) delete whereClause.id;
+                } else if (whereClause.requestor_id !== undefined) {
+                    // Requestor path: convert simple equality to OR
+                    const requestorClause = { requestor_id: whereClause.requestor_id };
+                    delete whereClause.requestor_id;
+                    whereClause[Op.or] = [requestorClause, verifierOr];
+                } else if (whereClause.department_id !== undefined) {
+                    // Department approver path: convert to OR
+                    const deptClause = { department_id: whereClause.department_id };
+                    delete whereClause.department_id;
+                    whereClause[Op.or] = [deptClause, verifierOr];
+                }
+                // super_admin has no restrictions — no change needed
+                console.log(`🔍 User ${req.user.id} is a verifier for request(s): [${verifierRequestIds.join(', ')}] — added to visible scope`);
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────────
 
         // Apply filters
         if (status) {
-            // Only allow filtering for draft if user is requestor
-            if (status === 'draft' && req.user.role !== 'requestor') {
-                // Ignore draft filter for non-requestors
-                excludeDrafts = true;
+            if (status === 'draft') {
+                // Any user can filter for their own drafts
+                // For non-requestors, we need to union their own drafts with their existing scope OR clause
+                if (whereClause[Op.or]) {
+                    // They already have an OR clause — add own drafts to it
+                    whereClause[Op.or].push({ requestor_id: req.user.id, status: 'draft' });
+                    // Remove the status filter that would clash; the OR handles it
+                } else {
+                    // Simple case: just add a status filter
+                    whereClause.status = 'draft';
+                    // And restrict to own requests so others don't see someone else's drafts
+                    if (req.user.role !== 'super_administrator') {
+                        whereClause.requestor_id = req.user.id;
+                    }
+                }
+                // Don't set excludeDrafts since we explicitly want drafts
+                excludeDrafts = false;
+            } else if (status.startsWith('verification_')) {
+                // Special filter: filter by verification_status, not status
+                const verificationStatusMap = {
+                    'verification_pending': 'pending',
+                    'verification_verified': 'verified',
+                    'verification_declined': 'declined'
+                };
+                const verificationStatus = verificationStatusMap[status];
+                if (verificationStatus) {
+                    whereClause.verification_status = verificationStatus;
+                }
             } else {
                 whereClause.status = status;
             }
         } else if (excludeDrafts) {
-            // If no status filter, exclude drafts for non-requestors
-            whereClause.status = { [Op.ne]: 'draft' };
+            // No status filter — exclude drafts for non-requestors EXCEPT their own
+            if (req.user.role !== 'super_administrator') {
+                whereClause.status = { [Op.ne]: 'draft' };
+                // But allow their own drafts via OR
+                if (!whereClause[Op.or]) {
+                    whereClause[Op.or] = [{ requestor_id: req.user.id, status: 'draft' }, { status: { [Op.ne]: 'draft' } }];
+                    delete whereClause.status;
+                }
+            } else {
+                whereClause.status = { [Op.ne]: 'draft' };
+            }
         }
 
         if (department && ['it_manager', 'service_desk', 'super_administrator'].includes(req.user.role)) {
@@ -144,6 +292,8 @@ export const getAllRequests = async (req, res) => {
 
         const { count, rows: requests } = await Request.findAndCountAll({
             where: whereClause,
+            distinct: true,
+            col: 'id',
             include: [
                 {
                     model: User,
@@ -202,16 +352,21 @@ export const getAllRequests = async (req, res) => {
                 submittedAt: request.submitted_at,
                 completedAt: request.completed_at,
                 createdAt: request.created_at,
-                updatedAt: request.updated_at,
+                updatedAt: request.updatedAt || request.updated_at,
+                sdStartedAt: request.sd_started_at,
+                verification_status: request.verification_status,
+                verifier_id: request.verifier_id,
                 approvals: request.Approvals?.map(approval => ({
                     id: approval.id,
                     type: approval.approval_type,
+                    approval_type: approval.approval_type,
                     status: approval.status,
                     approver: approval.Approver ? {
                         id: approval.Approver.id,
                         fullName: `${approval.Approver.first_name} ${approval.Approver.last_name}`
                     } : null,
                     comments: approval.comments,
+                    createdAt: approval.created_at,
                     approvedAt: approval.approved_at,
                     declinedAt: approval.declined_at
                 })) || []
@@ -315,13 +470,35 @@ export const getRequestById = async (req, res) => {
         }
 
         // Check access permissions for non-draft requests
-        const canAccess =
+        let canAccess =
             req.user.role === 'super_administrator' ||
             req.user.role === 'it_manager' ||
             req.user.role === 'endorser' ||
             req.user.role === 'service_desk' ||
             request.requestor_id === req.user.id ||
-            (req.user.role === 'department_approver' && request.department_id === req.user.department_id);
+            request.verifier_id === req.user.id; // assigned verifier can always view
+
+        // For department_approver: dynamically check ApprovalMatrix scoped to item_request
+        // IMPORTANT: must filter by form_type so vehicle_request global rules don't bleed in
+        if (!canAccess && req.user.role === 'department_approver') {
+            if (request.department_id === req.user.department_id) {
+                canAccess = true;
+            } else {
+                // Check if they're assigned to this department via item_request ApprovalMatrix
+                const matrixRule = await ApprovalMatrix.findOne({
+                    where: {
+                        user_id: req.user.id,
+                        is_active: true,
+                        form_type: 'item_request',
+                        [Op.or]: [
+                            { department_id: request.department_id },
+                            { department_id: null } // global item_request rule only
+                        ]
+                    }
+                });
+                canAccess = !!matrixRule;
+            }
+        }
 
         if (!canAccess) {
             return res.status(403).json({
@@ -361,6 +538,7 @@ export const getRequestById = async (req, res) => {
                 completedAt: request.completed_at,
                 createdAt: request.created_at,
                 updatedAt: request.updated_at,
+                sdStartedAt: request.sd_started_at,
                 items: request.Items?.map(item => ({
                     id: item.id,
                     category: item.category,
@@ -383,6 +561,11 @@ export const getRequestById = async (req, res) => {
                     endorserRemarks: item.endorser_remarks,
                     original_quantity: item.original_quantity // Include original_quantity
                 })) || [],
+                verificationStatus: request.verification_status,
+                verifierId: request.verifier_id,
+                verifierReason: request.verifier_reason,
+                verifiedAt: request.verified_at,
+                verifierComments: request.verifier_comments,
                 approvals: request.Approvals?.map(approval => ({
                     id: approval.id,
                     type: approval.approval_type,
@@ -457,13 +640,6 @@ export const createRequest = async (req, res) => {
             });
         }
 
-        // Only requestors can create requests
-        if (req.user.role !== 'requestor') {
-            return res.status(403).json({
-                error: 'Access denied',
-                message: 'Only users with the requestor role can create equipment requests'
-            });
-        }
 
         const {
             userName,
@@ -486,8 +662,8 @@ export const createRequest = async (req, res) => {
             });
         }
 
-        // Requestors can only create requests for their own department
-        if (req.user.department_id !== departmentId) {
+        // Super admins can create requests for any department; others must use their own department
+        if (req.user.role !== 'super_administrator' && req.user.department_id !== departmentId) {
             return res.status(403).json({
                 error: 'Department access denied',
                 message: 'You can only create requests for your own department'
@@ -1038,29 +1214,23 @@ export const approveRequest = async (req, res) => {
                 request.pending_approver_ids = [];
             }
         } else {
-            // Legacy Logic (Fallback)
-            if (request.status === 'submitted' && req.user.canApproveForDepartment(request.department_id)) {
-                approvalType = 'department_approval';
-                newStatus = 'department_approved';
-            } else if (request.status === 'department_approved' && req.user.role === 'endorser') {
-                approvalType = 'endorser_approval';
-                newStatus = 'checked_endorsed';
-            } else if ((request.status === 'department_approved' || request.status === 'checked_endorsed') && req.user.canApproveAsITManager()) {
-                approvalType = 'it_manager_approval';
-                newStatus = 'it_manager_approved';
-            } else if (request.status === 'it_manager_approved' && req.user.canProcessRequests()) {
-                approvalType = 'service_desk_processing';
-                newStatus = 'service_desk_processing';
-            } else if ((request.status === 'service_desk_processing' || request.status === 'pr_approved' || request.status === 'ready_to_deploy') && req.user.canProcessRequests()) {
+            // No workflow step found via dynamic lookup.
+            // This happens for terminal-ish statuses like 'ready_to_deploy', 'pr_approved',
+            // 'service_desk_processing' which are short-circuited in findCurrentStepForApprover.
+            // If the user has process permission (service desk), allow completion via legacy path.
+            if (request.canBeProcessedBy(req.user)) {
+                console.log(`ℹ️ No workflow step found, but user ${req.user.id} has process permission. Using legacy completion path.`);
                 approvalType = 'service_desk_processing';
                 newStatus = 'completed';
+                request.current_step_id = null;
+                request.pending_approver_ids = [];
             } else {
+                console.warn(`⚠️ No workflow step found for user ${req.user.id} on request ${request.id} (status: ${request.status})`);
                 return res.status(400).json({
-                    error: 'Invalid status',
-                    message: 'Request cannot be approved at this stage'
+                    error: 'No workflow configured',
+                    message: 'No workflow step found for your role on this request. Please ask your administrator to configure a workflow in Workflow Setup.'
                 });
             }
-            request.pending_approver_ids = []; // Legacy path doesn't optimize this
         }
 
         // Find or create approval record
@@ -1170,12 +1340,28 @@ export const approveRequest = async (req, res) => {
                 }
             }
 
+            // Compute sd_started_at before the update changes updatedAt.
+            // Case 1: entering service_desk_processing now → stamp the current time.
+            // Case 2: already in service_desk_processing but sd_started_at is NULL
+            //         (request predates this feature) → use the current updatedAt,
+            //         which is when the request last transitioned to this status.
+            const shouldSetSdStartedAt = !request.sd_started_at && (
+                newStatus === 'service_desk_processing' ||
+                request.status === 'service_desk_processing'
+            );
+            const sdStartedAtValue = shouldSetSdStartedAt
+                ? (request.status === 'service_desk_processing'
+                    ? (request.updatedAt || request.updated_at || new Date())  // backfill from current updatedAt
+                    : new Date())                                               // fresh transition
+                : undefined;
+
             // Update request status
             await request.update({
                 status: newStatus,
                 current_step_id: request.current_step_id,
                 pending_approver_ids: request.pending_approver_ids,
-                ...(newStatus === 'completed' && { completed_at: new Date() })
+                ...(newStatus === 'completed' && { completed_at: new Date() }),
+                ...(sdStartedAtValue !== undefined && { sd_started_at: sdStartedAtValue })
             });
 
             // Decrement Stock if Completed
@@ -1256,8 +1442,15 @@ export const approveRequest = async (req, res) => {
 
             // Send email notifications
             try {
-                // Notify requestor of approval
-                await emailService.notifyRequestApproved(request, request.Requestor, req.user, approvalType);
+                // Fetch IT Managers to CC
+                const itManagers = await User.findAll({
+                    where: { role: 'it_manager' },
+                    attributes: ['email']
+                });
+                const ccEmails = itManagers.map(manager => manager.email).filter(Boolean);
+
+                // Notify requestor of approval and CC IT Managers
+                await emailService.notifyRequestApproved(request, request.Requestor, req.user, approvalType, ccEmails);
 
                 // Notify ALL next approvers
                 for (const approver of nextApprovers) {
@@ -1336,7 +1529,12 @@ export const declineRequest = async (req, res) => {
             });
         }
 
-        if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user)) {
+        // Check permission: allow if user can approve/process by legacy logic,
+        // OR if they are in the pending_approver_ids (workflow-based assignment).
+        const isPendingApprover = Array.isArray(request.pending_approver_ids) &&
+            request.pending_approver_ids.includes(req.user.id);
+
+        if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user) && !isPendingApprover) {
             return res.status(403).json({
                 error: 'Access denied',
                 message: 'You do not have permission to decline this request'
@@ -1354,7 +1552,7 @@ export const declineRequest = async (req, res) => {
 
         // Fallback: If no workflow step, check legacy logic permissions
         if (!currentStep) {
-            if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user)) {
+            if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user) && !isPendingApprover) {
                 return res.status(403).json({
                     error: 'Access denied',
                     message: 'You do not have permission to decline this request'
@@ -1364,9 +1562,13 @@ export const declineRequest = async (req, res) => {
 
         if (currentStep) {
             approvalType = currentStep.step_name.toLowerCase().replace(/ /g, '_');
-            if (currentStep.step_name.includes('Department')) newStatus = 'department_declined';
-            else if (currentStep.step_name.includes('IT Manager')) newStatus = 'it_manager_declined';
-            else newStatus = 'declined'; // Generic
+            if (currentStep.step_name.toLowerCase().includes('department')) newStatus = 'department_declined';
+            else if (currentStep.step_name.toLowerCase().includes('it manager') || currentStep.step_name.toLowerCase().includes('it_manager')) newStatus = 'it_manager_declined';
+            else if (currentStep.step_name.toLowerCase().includes('endors')) newStatus = 'endorser_declined';
+            // Generic fallback: derive from current request status
+            else if (request.status === 'submitted') newStatus = 'department_declined';
+            else if (request.status === 'department_approved' || request.status === 'checked_endorsed') newStatus = 'it_manager_declined';
+            else newStatus = 'department_declined'; // Safe default — always a valid enum value
         } else {
             // Legacy Logic
             if (request.status === 'submitted' && req.user.canApproveForDepartment(request.department_id)) {
@@ -1484,7 +1686,13 @@ export const returnRequest = async (req, res) => {
             });
         }
 
-        if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user)) {
+        // Check permission: allow if user can approve/process by legacy logic,
+        // OR if they are in the pending_approver_ids (workflow-based assignment).
+        // This is needed for 'returned' status where canBeApprovedBy only checks 'submitted'.
+        const isPendingApprover = Array.isArray(request.pending_approver_ids) &&
+            request.pending_approver_ids.includes(req.user.id);
+
+        if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user) && !isPendingApprover) {
             return res.status(403).json({
                 error: 'Access denied',
                 message: 'You do not have permission to return this request'
@@ -1502,7 +1710,7 @@ export const returnRequest = async (req, res) => {
 
         // Fallback: If no workflow step, AND no legacy permission
         if (!currentStep) {
-            if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user)) {
+            if (!request.canBeApprovedBy(req.user) && !request.canBeProcessedBy(req.user) && !isPendingApprover) {
                 return res.status(403).json({
                     error: 'Access denied',
                     message: 'You do not have permission to return this request'
@@ -1514,7 +1722,7 @@ export const returnRequest = async (req, res) => {
             approvalType = currentStep.step_name.toLowerCase().replace(/ /g, '_');
 
             if (returnTo === 'department_approver' && currentStep.step_order > 1) {
-                newStatus = 'submitted';
+                newStatus = 'returned';
             } else {
                 newStatus = 'returned'; // Back to requestor
             }
@@ -1562,14 +1770,36 @@ export const returnRequest = async (req, res) => {
         // Update request status
         const updateData = { status: newStatus };
 
-        // If returning to requestor, clear submitted_at
-        if (returnTo === 'requestor') {
+        if (returnTo === 'department_approver') {
+            // Re-route back to Step 1: find it and re-assign the dept approver
+            try {
+                const { processWorkflowOnSubmit } = await import('../utils/workflowProcessor.js');
+                const step1Result = await processWorkflowOnSubmit('item_request', {
+                    department_id: request.department_id,
+                    requestor_id: request.requestor_id
+                });
+                if (step1Result && step1Result.step) {
+                    updateData.current_step_id = step1Result.step.id;
+                    const approverIds = (step1Result.approvers || (step1Result.approver ? [step1Result.approver] : []))
+                        .map(a => a.id);
+                    updateData.pending_approver_ids = approverIds;
+                    console.log(`🔁 Returned to dept approver: step_id=${step1Result.step.id}, approvers=[${approverIds.join(', ')}]`);
+                } else {
+                    // Fallback: clear so legacy logic handles it
+                    updateData.current_step_id = null;
+                    updateData.pending_approver_ids = [];
+                }
+            } catch (wfErr) {
+                console.error('Could not re-route to Step 1 on return:', wfErr);
+                updateData.current_step_id = null;
+                updateData.pending_approver_ids = [];
+            }
+        } else {
+            // Returning to requestor — clear workflow progress and submitted_at
             updateData.submitted_at = null;
+            updateData.current_step_id = null;
+            updateData.pending_approver_ids = [];
         }
-
-        // If returning, clear workflow progress
-        updateData.current_step_id = null;
-        updateData.pending_approver_ids = [];
 
         await request.update(updateData);
 
@@ -1745,8 +1975,67 @@ export const getStats = async (req, res) => {
         if (req.user.role === 'requestor') {
             whereClause.requestor_id = req.user.id;
         } else if (req.user.role === 'department_approver') {
-            whereClause.department_id = req.user.department_id;
+            // Filter by item_request ApprovalMatrix only (not vehicle_request rules)
+            const matrixRules = await ApprovalMatrix.findAll({
+                where: { user_id: req.user.id, is_active: true, form_type: 'item_request' },
+                attributes: ['department_id']
+            });
+            const hasGlobalRule = matrixRules.some(r => r.department_id === null);
+            if (!hasGlobalRule) {
+                const deptIds = new Set(matrixRules.map(r => r.department_id).filter(Boolean));
+                if (req.user.department_id) deptIds.add(req.user.department_id);
+                whereClause.department_id = deptIds.size > 0
+                    ? { [Op.in]: Array.from(deptIds) }
+                    : req.user.department_id;
+            }
+            // If hasGlobalRule — no dept filter (they see all item_request stats)
+        } else if (['it_manager', 'service_desk', 'endorser'].includes(req.user.role)) {
+            // IT Manager, Service Desk, and Endorser: only see stats for requests they are involved with
+            // (same logic as getAllRequests) — requests where they approved/actioned OR are pending approvers
+            const myApprovals = await Approval.findAll({
+                where: { approver_id: req.user.id },
+                attributes: ['request_id']
+            });
+            const myRequestIds = [...new Set(myApprovals.map(a => a.request_id))];
+            whereClause[Op.or] = [
+                ...(myRequestIds.length > 0 ? [{ id: { [Op.in]: myRequestIds } }] : []),
+                sequelize.where(
+                    sequelize.literal(`${req.user.id} = ANY(pending_approver_ids)`),
+                    true
+                )
+            ];
+            if (whereClause[Op.or].length === 0) {
+                whereClause.id = -1; // nothing visible
+            }
         }
+
+        // ── Universal Verifier Visibility (mirror of getAllRequests) ──────────────
+        // Include any requests where this user is assigned as verifier so stat
+        // counts match what the table shows.
+        if (req.user.role !== 'super_administrator') {
+            const verifierReqIds = (await Request.findAll({
+                where: { verifier_id: req.user.id },
+                attributes: ['id'],
+                raw: true
+            })).map(r => r.id);
+
+            if (verifierReqIds.length > 0) {
+                const verifierOr = { id: { [Op.in]: verifierReqIds } };
+                if (whereClause[Op.or]) {
+                    whereClause[Op.or] = [...whereClause[Op.or], verifierOr];
+                    if (whereClause.id === -1) delete whereClause.id;
+                } else if (whereClause.requestor_id !== undefined) {
+                    const tmp = whereClause.requestor_id;
+                    delete whereClause.requestor_id;
+                    whereClause[Op.or] = [{ requestor_id: tmp }, verifierOr];
+                } else if (whereClause.department_id !== undefined) {
+                    const tmp = whereClause.department_id;
+                    delete whereClause.department_id;
+                    whereClause[Op.or] = [{ department_id: tmp }, verifierOr];
+                }
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────────
 
         const stats = await Request.findAll({
             where: whereClause,
@@ -1758,21 +2047,50 @@ export const getStats = async (req, res) => {
             raw: true
         });
 
+        const verificationStatsData = await Request.findAll({
+            where: {
+                [Op.and]: [
+                    whereClause,
+                    { verification_status: { [Op.in]: ['pending', 'verified', 'declined'] } }
+                ]
+            },
+            attributes: [
+                "verification_status",
+                [sequelize.fn("COUNT", sequelize.col("id")), "count"]
+            ],
+            group: ["verification_status"],
+            raw: true
+        });
+
         const statusCounts = {
             draft: 0,
             submitted: 0,
             department_approved: 0,
             department_declined: 0,
+            checked_endorsed: 0,
+            endorser_declined: 0,
             it_manager_approved: 0,
             it_manager_declined: 0,
             service_desk_processing: 0,
+            pr_approved: 0,
+            ready_to_deploy: 0,
             completed: 0,
             cancelled: 0,
             returned: 0
         };
 
+        const verificationCounts = {
+            pending: 0,
+            verified: 0,
+            declined: 0
+        };
+
         stats.forEach(stat => {
             statusCounts[stat.status] = parseInt(stat.count);
+        });
+
+        verificationStatsData.forEach(stat => {
+            verificationCounts[stat.verification_status] = parseInt(stat.count);
         });
 
         // Calculate total excluding drafts for non-requestor roles
@@ -1786,9 +2104,10 @@ export const getStats = async (req, res) => {
         }
 
         // Get dynamic "Pending My Approval" count
-        // This is much more robust than status checking
+        // Scoped to the same whereClause so it matches what the table shows.
         const pendingMyApproval = await Request.count({
             where: {
+                ...whereClause,
                 pending_approver_ids: {
                     [Op.contains]: [req.user.id]
                 },
@@ -1803,6 +2122,7 @@ export const getStats = async (req, res) => {
                 ...statusCounts,
                 pendingMyApproval // Dynamic count
             },
+            verificationStats: verificationCounts,
             total: total
         });
     } catch (error) {
@@ -1908,7 +2228,14 @@ export const trackRequest = async (req, res) => {
                 break;
             }
 
-            const approval = approvals.find(a => a.approval_type === stage);
+            // Find matching approval record using both legacy and dynamic naming conventions
+            const approval = approvals.find(a => {
+                if (stage === 'endorser' && (a.approval_type === 'endorser' || a.approval_type === 'endorser_approval')) return true;
+                if (stage === 'department_approval' && (a.approval_type === 'department_approval' || a.approval_type === 'department')) return true;
+                if (stage === 'it_manager_approval' && (a.approval_type === 'it_manager_approval' || a.approval_type === 'it_manager')) return true;
+                if (stage === 'service_desk_processing' && (a.approval_type === 'service_desk_processing' || a.approval_type === 'service_desk')) return true;
+                return a.approval_type === stage;
+            });
             let stageName = '';
             let description = '';
 
@@ -1970,6 +2297,37 @@ export const trackRequest = async (req, res) => {
             let isApproved = approval && approval.status === 'approved';
             let isDeclined = approval && approval.status === 'declined';
 
+            // IF no approval record exists but the request status implies it has passed, mark it as approved
+            // E.g., if status is 'it_manager_approved', then 'department_approval' and 'endorser' must be done.
+            if (!isApproved && !isDeclined && request.status !== 'draft' && request.status !== 'submitted') {
+                const statusOrder = {
+                    'department_approved': 1,
+                    'checked_endorsed': 2,
+                    'endorser_approved': 2,
+                    'it_manager_approved': 3,
+                    'service_desk_processing': 4,
+                    'pr_approved': 5,
+                    'ready_to_deploy': 6,
+                    'completed': 7
+                };
+
+                const currentStageRank = {
+                    'department_approval': 1,
+                    'endorser': 2,
+                    'it_manager_approval': 3,
+                    'service_desk_processing': 4
+                }[stage] || 0;
+
+                const reqStatusRank = statusOrder[request.status] || 0;
+
+                if (reqStatusRank > 0 && reqStatusRank >= currentStageRank) {
+                    isApproved = true;
+                    if (!approval) {
+                        description = 'Approved (Auto-completed/Legacy)';
+                    }
+                }
+            }
+
             // Special handling for Service Desk Processing step
             // Mark as completed if request has moved to ready_to_deploy, pr_approved, or completed
             if (stage === 'service_desk_processing') {
@@ -1990,21 +2348,27 @@ export const trackRequest = async (req, res) => {
 
             // Use approved_at or declined_at for individual approval dates (not updated_at)
             let approvalTimestamp = null;
-            if (isApproved && approval.approved_at) {
-                approvalTimestamp = approval.approved_at;
-            } else if (isDeclined && approval.declined_at) {
-                approvalTimestamp = approval.declined_at;
-            } else if (isApproved || isDeclined) {
-                // Fallback to updated_at if specific timestamp not available
-                approvalTimestamp = approval.updated_at;
+            if (approval) {
+                if (isApproved && approval.approved_at) {
+                    approvalTimestamp = approval.approved_at;
+                } else if (isDeclined && approval.declined_at) {
+                    approvalTimestamp = approval.declined_at;
+                } else if (isApproved || isDeclined) {
+                    // Fallback to updated_at if specific timestamp not available
+                    approvalTimestamp = approval.updated_at;
+                }
+            }
+            // If we inferred approval but had no record, use request updated_at
+            if (isApproved && !approvalTimestamp) {
+                approvalTimestamp = request.updated_at || request.updatedAt;
             }
 
             // Special handling for Service Desk Processing timestamp
             // Use START time (created_at) instead of completion time so it appears before Deployed
-            if (stage === 'service_desk_processing' && isApproved) {
+            if (stage === 'service_desk_processing' && isApproved && approval) {
                 approvalTimestamp = approval.created_at || approval.createdAt;
                 // Also update description to be clearer
-                if (description === 'Processing by Service Desk') {
+                if (description === 'Processing by Service Desk' || description === 'Approved (Auto-completed/Legacy)') {
                     description = 'Processing started by Service Desk';
                 }
             }
@@ -2013,7 +2377,7 @@ export const trackRequest = async (req, res) => {
                 stage: stage,
                 status: stageName,
                 timestamp: approvalTimestamp,
-                completedBy: (isApproved || isDeclined) && approval.Approver
+                completedBy: (isApproved || isDeclined) && approval?.Approver
                     ? {
                         name: `${approval.Approver.first_name} ${approval.Approver.last_name}`,
                         username: approval.Approver.username,
@@ -2120,6 +2484,58 @@ export const trackRequest = async (req, res) => {
             });
         }
         // END: Deployed Event
+
+        // ── Pending Verification step (always appended after workflow steps if verifier assigned) ──
+        const reqData = request.toJSON ? request.toJSON() : request;
+        const verificationStatus = reqData.verification_status || request.verification_status;
+        const verifierId = reqData.verifier_id || request.verifier_id;
+        const verifiedAt = reqData.verified_at || request.verified_at;
+        const verifierComments = reqData.verifier_comments || request.verifier_comments;
+
+        if (verifierId) {
+            const isVerifPending = verificationStatus === 'pending';
+            const isVerifDone = verificationStatus === 'verified';
+            const isVerifDeclined = verificationStatus === 'declined';
+
+            timeline.push({
+                stage: 'pending_verification',
+                status: isVerifDone
+                    ? 'Verified'
+                    : isVerifDeclined
+                        ? 'Verification Declined'
+                        : 'Pending Verification',
+                timestamp: isVerifPending ? null : (verifiedAt || reqData.updated_at),
+                completedBy: null,
+                description: isVerifDone
+                    ? 'Request has been verified by the assigned verifier'
+                    : isVerifDeclined
+                        ? 'Verification was declined by the assigned verifier'
+                        : 'Request is awaiting verification by the assigned verifier',
+                comments: verifierComments || null,
+                isPending: isVerifPending,
+                isCompleted: isVerifDone,
+                isDeclined: isVerifDeclined,
+                isCancelled: false
+            });
+        }
+
+        // START: Cancelled Event
+        if (request.status === 'cancelled') {
+            const cancelTimestamp = getLogTimestamp(l => l.action === 'CANCEL') || request.updated_at || request.updatedAt;
+            timeline.push({
+                stage: 'cancelled',
+                status: 'Cancelled',
+                timestamp: cancelTimestamp,
+                completedBy: null,
+                description: 'This request has been cancelled',
+                comments: request.cancellation_reason || request.comments || null,
+                isPending: false,
+                isCompleted: false,
+                isDeclined: false,
+                isCancelled: true
+            });
+        }
+        // END: Cancelled Event
 
         // Ensure submittedDate is always available (use created_at or timeline first entry)
         // Use the same extraction logic as timeline
@@ -2587,5 +3003,112 @@ export const readyToDeploy = async (req, res) => {
     } catch (error) {
         console.error('Error marking as Ready to Deploy:', error);
         res.status(500).json({ success: false, message: 'Failed to update request status', error: error.message });
+    }
+};
+
+export const assignVerifier = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { verifier_id, reason } = req.body;
+
+        // Role restriction: Only IT Manager can assign verifier
+        if (req.user.role !== 'it_manager') {
+            return res.status(403).json({ success: false, message: "Only IT Managers are authorized to assign a verifier." });
+        }
+
+        // Fetch the request, the requestor, and the assigned verifier to send the email
+        const request = await Request.findByPk(id, {
+            include: [
+                { model: User, as: 'Requestor' }
+            ]
+        });
+        if (!request) return res.status(404).json({ success: false, message: "Request not found" });
+
+        const verifier = await User.findByPk(verifier_id);
+        if (!verifier) return res.status(404).json({ success: false, message: "Verifier not found" });
+
+        // Update Request
+        await request.update({
+            verifier_id,
+            verifier_reason: reason,
+            verification_status: 'pending',
+            verified_at: null, // Reset if reassigned
+            verifier_comments: null
+        });
+
+        // Send Email Notification to Verifier
+        await emailService.notifyVerifierAssigned(request, request.Requestor, verifier, reason);
+
+        res.json({ success: true, message: "Verifier assigned successfully" });
+
+    } catch (error) {
+        console.error("Error assigning verifier:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const verifyRequest = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status, comments } = req.body; // status: 'verified' | 'declined'
+
+        if (!['verified', 'declined'].includes(status)) {
+            return res.status(400).json({ success: false, message: "Invalid status" });
+        }
+
+        const request = await Request.findByPk(id);
+        if (!request) return res.status(404).json({ success: false, message: "Request not found" });
+
+        // Permission Check
+        if (request.verifier_id !== req.user.id) {
+            return res.status(403).json({ success: false, message: "You are not the assigned verifier for this request." });
+        }
+        if (request.verification_status !== 'pending') {
+            return res.status(400).json({ success: false, message: "This request is not pending verification." });
+        }
+
+        // Update Request
+        await request.update({
+            verification_status: status,
+            verified_at: new Date(),
+            verifier_comments: comments
+        });
+
+        // ---------------------------------------------------------
+        // Send Email Notification for Verification Completed
+        // ---------------------------------------------------------
+        try {
+            // Re-fetch request with Requestor to ensure we have the email
+            const updatedRequest = await Request.findByPk(id, {
+                include: [
+                    { model: User, as: 'Requestor', attributes: ['id', 'first_name', 'last_name', 'email', 'username'] }
+                ]
+            });
+
+            // Fetch IT Managers to CC them
+            const itManagers = await User.findAll({
+                where: { role: 'it_manager', is_active: true },
+                attributes: ['id', 'email', 'first_name', 'last_name']
+            });
+
+            // The verifier is req.user
+            await emailService.notifyVerificationCompleted(
+                updatedRequest,
+                updatedRequest.Requestor,
+                req.user,
+                status,
+                comments,
+                itManagers
+            );
+        } catch (emailError) {
+            console.error("Error sending verification completion email:", emailError);
+            // Don't fail the request verification just because the email failed
+        }
+
+        res.json({ success: true, message: "Verification processed successfully", request });
+
+    } catch (error) {
+        console.error("Error verifying request:", error);
+        res.status(500).json({ success: false, message: error.message });
     }
 };

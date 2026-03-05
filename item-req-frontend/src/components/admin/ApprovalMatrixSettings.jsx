@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Edit, X, Shield, Building, User, FileText, ArrowLeft, Settings } from 'lucide-react';
-import { approvalMatrixAPI, departmentsAPI, workflowsAPI, USER_ROLES } from '../../services/api';
+import { approvalMatrixAPI, departmentsAPI, usersAPI } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -42,11 +42,14 @@ export default function ApprovalMatrixSettings() {
             const [rulesRes, deptsRes, usersRes] = await Promise.all([
                 approvalMatrixAPI.getAll(),
                 departmentsAPI.getAll(),
-                workflowsAPI.getAllUsers()
+                usersAPI.getAll({ status: 'active', limit: 200 })
             ]);
+            console.log('[ApprovalMatrix] usersRes.data:', usersRes.data);
             setRules(rulesRes.data?.rules || []);
             setDepartments(deptsRes.data?.departments || deptsRes.data || []);
-            setUsers(usersRes.data?.users || usersRes.data || []);
+            const loadedUsers = usersRes.data?.users || usersRes.data?.data || usersRes.data || [];
+            console.log('[ApprovalMatrix] parsed users:', loadedUsers.length);
+            setUsers(loadedUsers);
         } catch (err) {
             console.error('Failed to load matrix rules data:', err);
         } finally {
@@ -299,9 +302,16 @@ export default function ApprovalMatrixSettings() {
                                             placeholder="e.g., Supervisor, department_approver"
                                         />
                                         <datalist id="roleSuggestions">
-                                            {USER_ROLES.map(r => (
-                                                <option key={r.value} value={r.value}>{r.label}</option>
-                                            ))}
+                                            <option value="department_approver" />
+                                            <option value="supervisor" />
+                                            <option value="head_manager" />
+                                            <option value="manager" />
+                                            <option value="director" />
+                                            <option value="vp" />
+                                            <option value="it_manager" />
+                                            <option value="endorser" />
+                                            <option value="super_administrator" />
+
                                         </datalist>
                                     </div>
                                 </div>

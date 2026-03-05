@@ -60,23 +60,24 @@ export const createApprovalMatrix = async (req, res) => {
     try {
         const { form_type, department_id, role, user_id, is_active } = req.body;
 
-        // Validate
-        if (!form_type || !department_id || !role || !user_id) {
-            return res.status(400).json({ message: 'form_type, department_id, role, and user_id are required' });
+        // Validate — department_id is optional (null = global fallback)
+        if (!form_type || !role || !user_id) {
+            return res.status(400).json({ message: 'form_type, role, and user_id are required' });
         }
 
-        // Check if duplicate rule exists
+        // Check if duplicate rule exists (same user in same role for same department)
         const existingRule = await ApprovalMatrix.findOne({
             where: {
                 form_type,
-                department_id,
-                role
+                department_id: department_id ?? null,
+                role,
+                user_id
             }
         });
 
         if (existingRule) {
             return res.status(400).json({
-                message: `A rule already exists for this Form, Department, and Role combination. Please update the existing rule instead.`
+                message: `This user is already assigned to this Form, Department, and Role combination.`
             });
         }
 
@@ -119,20 +120,22 @@ export const updateApprovalMatrix = async (req, res) => {
         if (
             (form_type && form_type !== rule.form_type) ||
             (department_id && department_id !== rule.department_id) ||
-            (role && role !== rule.role)
+            (role && role !== rule.role) ||
+            (user_id && user_id !== rule.user_id)
         ) {
             const existingRule = await ApprovalMatrix.findOne({
                 where: {
                     form_type: form_type || rule.form_type,
                     department_id: department_id || rule.department_id,
                     role: role || rule.role,
+                    user_id: user_id || rule.user_id,
                     id: { [Op.ne]: id }
                 }
             });
 
             if (existingRule) {
                 return res.status(400).json({
-                    message: `A rule already exists for this Form, Department, and Role combination.`
+                    message: `This user is already assigned to this Form, Department, and Role combination.`
                 });
             }
         }

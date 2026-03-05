@@ -202,7 +202,7 @@ const LoginForm = () => {
 
         {/* Helper Text below card */}
         <div className="mt-8 text-center animate-fade-in-up delay-200">
-          <a href="#" className="text-xs text-gray-500 hover:text-blue-400 transition-colors font-medium border-b border-transparent hover:border-blue-400/30 pb-0.5">
+          <a href="http://172.16.1.127:8081/znuny/customer.pl" className="text-xs text-gray-500 hover:text-blue-400 transition-colors font-medium border-b border-transparent hover:border-blue-400/30 pb-0.5">
             Need help? Contact IT Support
           </a>
         </div>

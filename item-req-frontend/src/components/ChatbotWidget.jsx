@@ -2,12 +2,13 @@ import React, { useState, useRef, useEffect } from 'react';
 import Spline from '@splinetool/react-spline';
 import { MessageSquare, X, Send, Bot, User, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
 
 const ChatbotWidget = () => {
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState([
-        { role: 'model', parts: [{ text: 'Hello! I am your STC IT & Vehicle Request Assistant. How can I help you today?' }] }
+        { role: 'model', parts: [{ text: 'Hi there! I\'m Stacy, your STC virtual companion. I\'m here to make your experience smooth and simple. How can I support you today?' }] }
     ]);
     const [inputMessage, setInputMessage] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -93,7 +94,7 @@ const ChatbotWidget = () => {
                         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 text-white flex items-center justify-between shrink-0">
                             <div className="flex items-center space-x-2">
                                 <Bot size={24} />
-                                <h3 className="font-semibold text-lg">STC Assistant</h3>
+                                <h3 className="font-semibold text-lg">STACY</h3>
                             </div>
                             <button onClick={() => setIsOpen(false)} className="text-white hover:text-gray-200 transition-colors">
                                 <X size={20} />
@@ -116,21 +117,29 @@ const ChatbotWidget = () => {
                                         initial={{ opacity: 0, x: isModel ? -10 : 10 }}
                                         animate={{ opacity: 1, x: 0 }}
                                         key={idx}
-                                        className={`flex ${isModel ? 'justify-start' : 'justify-end'}`}
+                                        className={`flex ${isModel ? 'justify-start' : 'justify-end'} w-full`}
                                     >
-                                        <div className={`max-w-[80%] p-3 rounded-2xl flex items-start gap-2 ${isModel
+                                        <div className={`max-w-[85%] p-3 rounded-2xl flex items-start gap-2 overflow-hidden ${isModel
                                             ? 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-tl-sm border border-gray-100 dark:border-gray-700 shadow-sm'
                                             : 'bg-blue-600 text-white rounded-tr-sm shadow-md'
                                             }`}>
                                             {isModel && <Bot size={16} className="mt-1 shrink-0 text-blue-500" />}
-                                            <div className="text-sm render-markdown prose-sm dark:prose-invert">
-                                                {/* We use basic text rendering here, but a markdown parser would be better for complex answers */}
-                                                {msg.parts[0].text.split('\n').map((line, i) => (
-                                                    <React.Fragment key={i}>
-                                                        {line}
-                                                        {i < msg.parts[0].text.split('\n').length - 1 && <br />}
-                                                    </React.Fragment>
-                                                ))}
+                                            <div className="text-sm w-full break-words overflow-hidden max-w-none prose-sm dark:prose-invert text-justify">
+                                                <ReactMarkdown
+                                                    components={{
+                                                        p: ({ node, ...props }) => <p className="mb-2 last:mb-0 leading-relaxed text-justify" {...props} />,
+                                                        a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 hover:underline break-all" target="_blank" rel="noopener noreferrer" {...props} />,
+                                                        ul: ({ node, ...props }) => <ul className="list-disc ml-4 mb-2 text-justify" {...props} />,
+                                                        ol: ({ node, ...props }) => <ol className="list-decimal ml-4 mb-2 text-justify" {...props} />,
+                                                        li: ({ node, ...props }) => <li className="mb-1 text-justify" {...props} />,
+                                                        h1: ({ node, ...props }) => <h1 className="text-lg font-bold mb-2 break-words text-justify" {...props} />,
+                                                        h2: ({ node, ...props }) => <h2 className="text-md font-bold mb-2 break-words text-justify" {...props} />,
+                                                        h3: ({ node, ...props }) => <h3 className="text-sm font-bold mb-2 break-words text-justify" {...props} />,
+                                                        strong: ({ node, ...props }) => <strong className="font-semibold text-gray-900 dark:text-white" {...props} />
+                                                    }}
+                                                >
+                                                    {msg.parts[0].text}
+                                                </ReactMarkdown>
                                             </div>
                                             {!isModel && <User size={16} className="mt-1 shrink-0 text-blue-200" />}
                                         </div>

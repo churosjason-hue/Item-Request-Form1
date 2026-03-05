@@ -26,15 +26,32 @@ function formatDate(dateString) {
     return date.toISOString().split("T")[0]; // Returns YYYY-MM-DD format
 }
 
-// Generate reference code
-function generateReferenceCode() {
+// Generate reference code in SVRFYYYY-XXXX format (sequential, DB-backed)
+async function generateReferenceCode() {
     const now = new Date();
     const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-    const timestamp = now.getTime().toString().slice(-6);
+    const prefix = `SVRF${year}-`;
 
-    return `SVR-${year}${month}${day}-${timestamp}`;
+    // Find the latest reference code for this year
+    const latest = await ServiceVehicleRequest.findOne({
+        where: {
+            reference_code: { [Op.like]: `${prefix}%` }
+        },
+        order: [['id', 'DESC']]
+    });
+
+    let nextSeq;
+    if (latest && latest.reference_code) {
+        const parts = latest.reference_code.split('-');
+        const lastSeq = parseInt(parts[parts.length - 1], 10);
+        // Always ensure we never go below 199 even if existing records are lower
+        nextSeq = isNaN(lastSeq) ? 199 : Math.max(lastSeq + 1, 199);
+    } else {
+        // No existing records this year — start at 199
+        nextSeq = 199;
+    }
+
+    return `${prefix}${String(nextSeq).padStart(4, '0')}`;
 }
 
 // Helper function to build order clause for sorting vehicle requests
@@ -73,47 +90,44 @@ export const getAllRequests = async (req, res) => {
         let roleAccessClause = {};
 
         // Role-based filtering
-        if (req.user.role === "requestor") {
-            // Requestors can only see their own requests
-            roleAccessClause.requested_by = req.user.id;
-        } else if (req.user.role === "department_approver") {
+        // NOTE: For service vehicle requests, IT managers are NOT the managing dept
+        // (that's ODHC). So IT managers only see their own requests, like requestors.
+        // Only super_administrator has unrestricted access.
+        if (req.user.role === 'super_administrator') {
+            // Unrestricted access — whereClause stays empty
+        } else if (req.user.role === 'department_approver') {
             // Check if user is from the ODHC (vehicle steward) department
             const odhcDepartment = await Department.findOne({
-                where: {
-                    is_vehicle_steward: true,
-                    is_active: true,
-                },
+                where: { is_vehicle_steward: true, is_active: true },
             });
 
             if (odhcDepartment && req.user.department_id === odhcDepartment.id) {
-                // ODHC department approver can see all non-draft vehicle requests
+                // ODHC dept approver: see all non-draft requests OR their own requests
                 roleAccessClause = {
-                    status: ['submitted', 'department_approved', 'completed', 'returned', 'declined']
+                    [Op.or]: [
+                        { status: { [Op.in]: ['submitted', 'department_approved', 'completed', 'returned', 'declined'] } },
+                        { requested_by: req.user.id }
+                    ]
                 };
             } else {
-                // Non-ODHC department_approver (e.g. acting as temporary verifier):
-                // Do NOT grant department-wide access. The Op.or clause below
-                // already handles visibility via verifier_id for assigned requests.
-                roleAccessClause = { requested_by: -1 }; // matches nothing — intentional
+                // Non-ODHC dept approver: see only their own requests + verifier assignments
+                roleAccessClause = { requested_by: req.user.id };
             }
         } else {
-            // Default for any other role: can only see their own requests
+            // All other roles (including it_manager): can only see their own requests
             roleAccessClause.requested_by = req.user.id;
         }
 
         // Construct final where clause combining role access and verifier access
         let whereClause = {};
-        if (["it_manager", "super_administrator"].includes(req.user.role)) {
-            // Unrestricted access
+        if (req.user.role === 'super_administrator') {
+            // Unrestricted — no filter
         } else {
-            // Restricted access: Role OR Assigned Verifier
             whereClause = {
                 [Op.or]: [
                     roleAccessClause,
-                    {
-                        verifier_id: req.user.id,
-                        verification_status: 'pending'
-                    }
+                    { verifier_id: req.user.id, verification_status: 'pending' },
+                    { requested_by: req.user.id } // always see your own requests
                 ]
             };
         }
@@ -309,32 +323,24 @@ export const getRequestById = async (req, res) => {
         }
 
         // Check access permissions
+        // For service vehicle requests: only ODHC dept approvers + super_admin see all.
+        // IT managers only see their own requests.
         let hasAccess = false;
 
         if (req.user.id === request.requested_by) {
-            // Requestor can always see their own request
+            // Anyone can see their own request
             hasAccess = true;
-        } else if (["it_manager", "super_administrator"].includes(req.user.role)) {
-            // IT managers, service desk, and super admins can see all requests
+        } else if (req.user.role === 'super_administrator') {
+            // Super admins can see all requests
             hasAccess = true;
-        } else if (req.user.role === "department_approver") {
-            // For vehicle requests, only ODHC department approvers have broad access.
+        } else if (req.user.role === 'department_approver') {
+            // Only ODHC dept approvers have broad access to vehicle requests
             const odhcDepartment = await Department.findOne({
-                where: {
-                    is_vehicle_steward: true,
-                    is_active: true,
-                },
+                where: { is_vehicle_steward: true, is_active: true },
             });
-
             if (odhcDepartment && req.user.department_id === odhcDepartment.id) {
-                // ODHC department approver can see all vehicle requests
                 hasAccess = true;
             }
-            // Non-ODHC department_approvers: access is granted ONLY via the verifier_id
-            // check below. Department membership alone is NOT sufficient.
-        } else if (req.user.department_id === request.department_id) {
-            // Users from the same department can see the request
-            hasAccess = true;
         }
 
         if (request.verifier_id === req.user.id && request.verification_status === 'pending') {
@@ -360,6 +366,25 @@ export const getRequestById = async (req, res) => {
                 lastName: requestData.RequestedByUser.last_name,
                 fullName: `${requestData.RequestedByUser.first_name} ${requestData.RequestedByUser.last_name}`
             };
+        }
+
+        // Compute isPendingMyApproval so frontend can gate approval buttons correctly
+        if (!['completed', 'declined', 'draft'].includes(requestData.status)) {
+            if (requestData.pending_approver_ids && requestData.pending_approver_ids.length > 0) {
+                requestData.isPendingMyApproval = requestData.pending_approver_ids.includes(req.user.id);
+            } else {
+                try {
+                    const currentStep = await findCurrentStepForApprover('vehicle_request', req.user, requestData.status, {
+                        department_id: requestData.department_id,
+                        current_step_id: requestData.current_step_id
+                    });
+                    requestData.isPendingMyApproval = !!currentStep;
+                } catch (err) {
+                    requestData.isPendingMyApproval = false;
+                }
+            }
+        } else {
+            requestData.isPendingMyApproval = false;
         }
 
         res.json({
@@ -462,7 +487,7 @@ export const createRequest = async (req, res) => {
                     ? formatDate(expiration_date) || null
                     : null,
             requested_by: req.user.id,
-            reference_code: generateReferenceCode(),
+            reference_code: await generateReferenceCode(),
             status: status === "draft" ? "draft" : "submitted",
             comments: comments || null,
             urgency_justification: urgency_justification || null,
@@ -571,6 +596,7 @@ export const updateRequest = async (req, res) => {
             "requestor_signature",
             "assigned_driver",
             "assigned_vehicle",
+            "assigned_vehicle_other",
             "approval_date"
         ];
 
@@ -615,7 +641,8 @@ export const updateRequest = async (req, res) => {
                         "urgency_justification",
                         "requestor_signature",
                         "assigned_driver",
-                        "assigned_vehicle"
+                        "assigned_vehicle",
+                        "assigned_vehicle_other"
                     ].includes(field)
                 ) {
                     request[field] = req.body[field] || null;
@@ -895,8 +922,8 @@ export const approveRequest = async (req, res) => {
             }
 
             if (
-                request.assigned_vehicle === null ||
-                request.assigned_vehicle === undefined
+                (request.assigned_vehicle === null || request.assigned_vehicle === undefined) &&
+                !request.assigned_vehicle_other
             ) {
                 return res.status(400).json({
                     success: false,
@@ -1523,7 +1550,7 @@ export const cancelRequest = async (req, res) => {
 export const assignVehicle = async (req, res) => {
     try {
         const { id } = req.params;
-        const { assigned_driver, assigned_vehicle } = req.body;
+        const { assigned_driver, assigned_vehicle, assigned_vehicle_other } = req.body;
 
         const request = await ServiceVehicleRequest.findByPk(id);
         if (!request) {
@@ -1554,9 +1581,9 @@ export const assignVehicle = async (req, res) => {
             });
         }
 
-        // Validate and get vehicle if provided
+        // Validate and get vehicle if provided (not "other")
         let vehicleId = null;
-        if (assigned_vehicle) {
+        if (assigned_vehicle && assigned_vehicle !== 'other') {
             const vehicle = await Vehicle.findByPk(parseInt(assigned_vehicle));
             if (!vehicle) {
                 return res.status(404).json({
@@ -1568,6 +1595,8 @@ export const assignVehicle = async (req, res) => {
         }
 
         request.assigned_vehicle = vehicleId;
+        // Store free-text "other" description; clear it when a real vehicle is assigned
+        request.assigned_vehicle_other = vehicleId ? null : (assigned_vehicle_other || null);
 
         // Removed availability check as per user request to allow double booking
 
@@ -1589,6 +1618,7 @@ export const assignVehicle = async (req, res) => {
             details: {
                 message: 'Vehicle/Driver Assigned',
                 assignedVehicleId: vehicleId,
+                assignedVehicleOther: vehicleId ? null : (assigned_vehicle_other || null),
                 assignedDriver: assigned_driver,
                 approvalDate: req.body.approval_date || null
             }
@@ -1608,6 +1638,7 @@ export const assignVehicle = async (req, res) => {
         });
     }
 };
+
 
 export const deleteRequest = async (req, res) => {
     try {
@@ -1680,45 +1711,41 @@ export const getStats = async (req, res) => {
         let roleAccessClause = {};
 
         // Role-based filtering
-        if (req.user.role === "requestor") {
-            roleAccessClause.requested_by = req.user.id;
-        } else if (req.user.role === "department_approver") {
-            // For vehicle requests, ODHC department approvers should see ALL non-draft requests
+        // NOTE: it_manager is NOT unrestricted for vehicle requests — they only see their own.
+        // Only super_administrator has full visibility across all vehicle requests.
+        if (req.user.role === 'super_administrator') {
+            // Unrestricted access — whereClause stays empty
+        } else if (req.user.role === 'department_approver') {
             const odhcDepartment = await Department.findOne({
-                where: {
-                    is_vehicle_steward: true,
-                    is_active: true,
-                },
+                where: { is_vehicle_steward: true, is_active: true },
             });
 
             if (odhcDepartment && req.user.department_id === odhcDepartment.id) {
-                // ODHC department approver can see all non-draft vehicle requests
+                // ODHC dept approver: see all non-draft requests OR own requests
                 roleAccessClause = {
-                    status: ['submitted', 'department_approved', 'completed', 'returned', 'declined']
+                    [Op.or]: [
+                        { status: { [Op.in]: ['submitted', 'department_approved', 'completed', 'returned', 'declined'] } },
+                        { requested_by: req.user.id }
+                    ]
                 };
             } else {
-                // Non-ODHC department_approver (e.g. acting as temporary verifier):
-                // Do NOT grant department-wide access to stats.
-                // The Op.or clause below handles visibility via verifier_id only.
-                roleAccessClause = { requested_by: -1 }; // matches nothing — intentional
+                // Non-ODHC dept approver: only own requests + verifier assignments
+                roleAccessClause = { requested_by: req.user.id };
             }
         } else {
             roleAccessClause.requested_by = req.user.id;
         }
 
-        // Construct final where clause combining role access and verifier access
+        // Construct final where clause
         let whereClause = {};
-        if (["it_manager", "super_administrator"].includes(req.user.role)) {
-            // Unrestricted access
+        if (req.user.role === 'super_administrator') {
+            // Unrestricted — no filter
         } else {
-            // Restricted access: Role OR Assigned Verifier
             whereClause = {
                 [Op.or]: [
                     roleAccessClause,
-                    {
-                        verifier_id: req.user.id,
-                        verification_status: 'pending'
-                    }
+                    { verifier_id: req.user.id, verification_status: 'pending' },
+                    { requested_by: req.user.id } // always see own requests
                 ]
             };
         }
@@ -1775,12 +1802,19 @@ export const getStats = async (req, res) => {
             }
         });
 
+        // Count requests pending THIS user's approval (using pending_approver_ids)
+        const pendingMyApprovalCount = await ServiceVehicleRequest.count({
+            where: {
+                pending_approver_ids: { [Op.contains]: [req.user.id] },
+                status: { [Op.notIn]: ['draft', 'completed', 'declined'] }
+            }
+        });
+
         // Calculate total excluding drafts for non-requestor roles
         let total;
         if (req.user.role === "requestor") {
             total = Object.values(statusCounts).reduce((sum, count) => sum + count, 0);
         } else {
-            // Exclude drafts from total for other roles
             const { draft, ...countsWithoutDraft } = statusCounts;
             total = Object.values(countsWithoutDraft).reduce((sum, count) => sum + count, 0);
         }
@@ -1788,7 +1822,8 @@ export const getStats = async (req, res) => {
         res.json({
             stats: statusCounts,
             verificationStats: verificationCounts,
-            total: total
+            total: total,
+            pendingMyApproval: pendingMyApprovalCount
         });
     } catch (error) {
         console.error("Error fetching service vehicle request statistics:", error);

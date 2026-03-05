@@ -20,7 +20,9 @@ import {
   ArrowUpDown
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { usersAPI, departmentsAPI } from '../../services/api';
+import { usersAPI, departmentsAPI, settingsAPI, USER_ROLES } from '../../services/api';
+
+const ROLES_SETTINGS_KEY = 'workflow_custom_roles';
 
 const UserManagement = () => {
   const navigate = useNavigate();
@@ -41,6 +43,7 @@ const UserManagement = () => {
   const [exporting, setExporting] = useState(false);
   const [sortBy, setSortBy] = useState('name'); // 'name' or 'id'
   const [sortOrder, setSortOrder] = useState('asc'); // 'asc' or 'desc'
+  const [savedRoles, setSavedRoles] = useState([]); // custom roles from Workflow Setup
 
   // Redirect if user doesn't have permission
   useEffect(() => {
@@ -67,6 +70,15 @@ const UserManagement = () => {
 
       setUsers(usersResponse.data.users || usersResponse.data);
       setDepartments(departmentsResponse.data.departments || departmentsResponse.data);
+
+      // Load saved custom roles from the same source as Workflow Setup
+      try {
+        const rolesRes = await settingsAPI.get(ROLES_SETTINGS_KEY);
+        const rolesData = rolesRes.data?.value ?? rolesRes.data ?? [];
+        setSavedRoles(Array.isArray(rolesData) ? rolesData : []);
+      } catch {
+        // If no roles saved yet, just leave as empty
+      }
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -92,7 +104,8 @@ const UserManagement = () => {
     setEditingUser({
       ...userToEdit,
       newRole: userToEdit.role,
-      newDepartment: userToEdit.department?.name || ''
+      newDepartment: userToEdit.department?.name || '',
+      newCustomRoles: [...(userToEdit.customRoles || [])]
     });
     setShowEditModal(true);
   };
@@ -103,6 +116,18 @@ const UserManagement = () => {
 
       if (editingUser.newRole !== editingUser.role) {
         await usersAPI.updateRole(editingUser.id, editingUser.newRole);
+        updated = true;
+      }
+
+      // Check for custom roles changes
+      const currentCustomRoles = editingUser.customRoles || [];
+      const newCustomRoles = editingUser.newCustomRoles || [];
+      const customRolesChanged =
+        currentCustomRoles.length !== newCustomRoles.length ||
+        !currentCustomRoles.every(role => newCustomRoles.includes(role));
+
+      if (customRolesChanged) {
+        await usersAPI.updateCustomRoles(editingUser.id, newCustomRoles);
         updated = true;
       }
 
@@ -319,12 +344,9 @@ const UserManagement = () => {
                 className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
               >
                 <option value="">All Roles</option>
-                <option value="requestor">Requestor</option>
-                <option value="department_approver">Department Approver</option>
-                <option value="endorser">Endorser</option>
-                <option value="it_manager">IT Manager</option>
-                <option value="service_desk">Service Desk</option>
-                <option value="super_administrator">Super Administrator</option>
+                {USER_ROLES.map(r => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
               </select>
             </div>
 
@@ -436,13 +458,24 @@ const UserManagement = () => {
                           <div className="text-xs text-gray-500">{u.title}</div>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getRoleBadge(u.role)}
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col space-y-2">
+                          <div>{getRoleBadge(u.role)}</div>
+                          {u.customRoles && u.customRoles.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {u.customRoles.map(cr => (
+                                <span key={cr} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                  {cr}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${u.isActive
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-red-100 text-red-800'
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-red-100 text-red-800'
                           }`}>
                           {u.isActive ? (
                             <>
@@ -479,8 +512,8 @@ const UserManagement = () => {
                           <button
                             onClick={() => handleToggleUserStatus(u.id, u.isActive)}
                             className={`${u.isActive
-                                ? 'text-red-600 hover:text-red-900'
-                                : 'text-green-600 hover:text-green-900'
+                              ? 'text-red-600 hover:text-red-900'
+                              : 'text-green-600 hover:text-green-900'
                               }`}
                             title={u.isActive ? 'Deactivate User' : 'Activate User'}
                           >
@@ -525,12 +558,9 @@ const UserManagement = () => {
                   onChange={(e) => setEditingUser(prev => ({ ...prev, newRole: e.target.value }))}
                   className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                 >
-                  <option value="requestor">Requestor</option>
-                  <option value="department_approver">Department Approver</option>
-                  <option value="endorser">Endorser</option>
-                  <option value="it_manager">IT Manager</option>
-                  <option value="service_desk">Service Desk</option>
-                  <option value="super_administrator">Super Administrator</option>
+                  {USER_ROLES.map(r => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -547,6 +577,81 @@ const UserManagement = () => {
                 />
                 <p className="mt-1 text-xs text-gray-500">
                   This will update the Department attribute in Active Directory
+                </p>
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Custom Matrix Roles
+                </label>
+                <div className="space-y-2 max-h-40 overflow-y-auto p-2 border border-gray-200 rounded-md bg-gray-50">
+                  {/* Let's allow adding arbitrary roles here */}
+                  <div className="flex gap-2 mb-3">
+                    <input
+                      type="text"
+                      id="newCustomRoleInput"
+                      list="customRoleDatalist"
+                      placeholder="Type or pick a role..."
+                      className="flex-1 rounded-md border-gray-300 text-sm py-1 px-2 border"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const val = e.target.value.trim();
+                          if (val && !editingUser.newCustomRoles.includes(val)) {
+                            setEditingUser(prev => ({
+                              ...prev,
+                              newCustomRoles: [...prev.newCustomRoles, val]
+                            }));
+                            e.target.value = '';
+                          }
+                        }
+                      }}
+                    />
+                    <datalist id="customRoleDatalist">
+                      {savedRoles.map(r => <option key={r} value={r} />)}
+                    </datalist>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const input = document.getElementById('newCustomRoleInput');
+                        const val = input?.value.trim();
+                        if (val && !editingUser.newCustomRoles.includes(val)) {
+                          setEditingUser(prev => ({
+                            ...prev,
+                            newCustomRoles: [...prev.newCustomRoles, val]
+                          }));
+                          if (input) input.value = '';
+                        }
+                      }}
+                      className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200"
+                    >
+                      Add
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {editingUser.newCustomRoles?.map(role => (
+                      <span key={role} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                        {role}
+                        <button
+                          type="button"
+                          onClick={() => setEditingUser(prev => ({
+                            ...prev,
+                            newCustomRoles: prev.newCustomRoles.filter(r => r !== role)
+                          }))}
+                          className="ml-1 text-indigo-500 hover:text-indigo-700"
+                        >
+                          <XCircle className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                    {(!editingUser.newCustomRoles || editingUser.newCustomRoles.length === 0) && (
+                      <p className="text-xs text-gray-500 italic w-full text-center py-2">No custom roles assigned.</p>
+                    )}
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  These roles map the user to specific steps in the workflow Matrix.
                 </p>
               </div>
 

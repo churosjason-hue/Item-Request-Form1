@@ -23,6 +23,7 @@ import categoryRoutes from './routes/categories.js';
 import settingsRoutes from './routes/settings.js';
 import chatbotRoutes from './routes/chatbot.js';
 import approvalMatrixRoutes from './routes/approvalMatrix.js';
+import apiKeyRoutes from './routes/apiKeys.js';
 
 // Import database
 import { sequelize } from './config/database.js';
@@ -57,7 +58,7 @@ app.use(cors({
   origin: true, // Allow all origins
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-API-Key'],
   exposedHeaders: ['Content-Type', 'Authorization'],
   preflightContinue: false,
   optionsSuccessStatus: 204
@@ -97,6 +98,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/chat', chatbotRoutes);
 app.use('/api/approval-matrix', approvalMatrixRoutes);
+app.use('/api/api-keys', apiKeyRoutes);
 
 // Option 1: Serve frontend static files from backend (Single Port Deployment)
 // This allows the backend to serve both API and frontend from the same port

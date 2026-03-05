@@ -120,27 +120,52 @@ td {
 
 /* Print styles */
 @media print {
-  body {
+  /* ── Reset page ─────────────────── */
+  html, body {
     background-color: white !important;
     color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
   }
 
-  .no-print {
+  /* ── Hide non-print elements ────── */
+  .no-print,
+  [data-sidebar],
+  nav,
+  aside {
     display: none !important;
   }
 
-  .print-break {
-    page-break-after: always;
+  /* ── Layout: sidebar gone, main fills page ── */
+  .flex.flex-col.md\:flex-row {
+    display: block !important;
   }
 
-  .print-break-inside-avoid {
-    page-break-inside: avoid;
+  main {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+    background: white !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
 
-  /* Ensure form elements are visible in print */
-  input,
-  select,
-  textarea {
+  /* ── Colours ────────────────────── */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .dark\:bg-gray-900, .dark\:bg-gray-800, .bg-gray-50, .bg-gray-100 {
+    background-color: white !important;
+  }
+
+  /* ── Form inputs — clean, no chrome ── */
+  input, select, textarea {
     border: none !important;
     background-color: white !important;
     -webkit-appearance: none;
@@ -148,12 +173,16 @@ td {
     appearance: none;
     padding: 0 !important;
     margin: 0 !important;
+    box-shadow: none !important;
+    color: black !important;
   }
 
-  /* Print table borders */
-  table,
-  th,
-  td {
+  /* ── Table borders ──────────────── */
+  table, th, td {
     border: 1px solid #000 !important;
   }
+
+  /* ── Page break helpers ─────────── */
+  .print-break        { page-break-after: always; }
+  .print-break-inside-avoid { page-break-inside: avoid; }
 }

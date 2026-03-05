@@ -15,8 +15,13 @@ import AuditLog from './AuditLog.js';
 import Item from './Item.js';
 import Category from './Category.js';
 import SystemSetting from './SystemSetting.js';
+import ApiKey from './ApiKey.js';
 
 // Define associations
+
+// ApiKey - User associations
+ApiKey.belongsTo(User, { foreignKey: 'created_by', as: 'CreatedBy' });
+User.hasMany(ApiKey, { foreignKey: 'created_by', as: 'ApiKeys' });
 
 // AuditLog - User associations
 AuditLog.belongsTo(User, {
@@ -50,6 +55,17 @@ Request.belongsTo(User, {
 User.hasMany(Request, {
   foreignKey: 'requestor_id',
   as: 'Requests'
+});
+
+// Request - Verifier associations
+Request.belongsTo(User, {
+  foreignKey: 'verifier_id',
+  as: 'Verifier'
+});
+
+User.hasMany(Request, {
+  foreignKey: 'verifier_id',
+  as: 'VerifiedRequests'
 });
 
 // Request - Department associations
@@ -264,7 +280,8 @@ export {
   AuditLog,
   Item,
   Category,
-  SystemSetting
+  SystemSetting,
+  ApiKey
 };
 
 // Sync database function
@@ -308,8 +325,6 @@ export async function initializeDefaultData() {
     });
 
     console.log('✅ Default departments initialized');
-    // Initialize default workflows if they don't exist
-    await initializeDefaultWorkflows();
 
     // Initialize default categories
     await initializeDefaultCategories();
@@ -321,125 +336,7 @@ export async function initializeDefaultData() {
   }
 }
 
-// Initialize default workflows
-export async function initializeDefaultWorkflows() {
-  try {
-    // Get the first super administrator user to use as creator
-    const superAdmin = await User.findOne({
-      where: { role: 'super_administrator' },
-      order: [['id', 'ASC']]
-    });
 
-    if (!superAdmin) {
-      console.log('⚠️  No super administrator found. Skipping default workflow initialization.');
-      return;
-    }
-
-    // Check if default workflows already exist
-    const existingItemWorkflow = await ApprovalWorkflow.findOne({
-      where: { form_type: 'item_request', is_default: true }
-    });
-
-    const existingVehicleWorkflow = await ApprovalWorkflow.findOne({
-      where: { form_type: 'vehicle_request', is_default: true }
-    });
-
-    // Create default Item Request workflow if it doesn't exist
-    if (!existingItemWorkflow) {
-      const itemWorkflow = await ApprovalWorkflow.create({
-        form_type: 'item_request',
-        name: 'Standard Item Request Workflow',
-        is_active: true,
-        is_default: true,
-        created_by: superAdmin.id,
-        updated_by: superAdmin.id
-      });
-
-      // Create workflow steps for item request
-      await WorkflowStep.create({
-        workflow_id: itemWorkflow.id,
-        step_order: 1,
-        step_name: 'Department Approval',
-        approver_type: 'role',
-        approver_role: 'department_approver',
-        approver_user_id: null,
-        approver_department_id: null,
-        requires_same_department: true,
-        is_required: true,
-        can_skip: false,
-        status_on_approval: 'department_approved',
-        status_on_completion: null
-      });
-
-      await WorkflowStep.create({
-        workflow_id: itemWorkflow.id,
-        step_order: 2,
-        step_name: 'IT Manager Approval',
-        approver_type: 'role',
-        approver_role: 'it_manager',
-        approver_user_id: null,
-        approver_department_id: null,
-        requires_same_department: false,
-        is_required: true,
-        can_skip: false,
-        status_on_approval: 'it_manager_approved',
-        status_on_completion: null
-      });
-
-      await WorkflowStep.create({
-        workflow_id: itemWorkflow.id,
-        step_order: 3,
-        step_name: 'Service Desk Processing',
-        approver_type: 'role',
-        approver_role: 'service_desk',
-        approver_user_id: null,
-        approver_department_id: null,
-        requires_same_department: false,
-        is_required: true,
-        can_skip: false,
-        status_on_approval: 'service_desk_processing',
-        status_on_completion: 'completed'
-      });
-
-      console.log('✅ Default Item Request workflow initialized');
-    }
-
-    // Create default Vehicle Request workflow if it doesn't exist
-    if (!existingVehicleWorkflow) {
-      const vehicleWorkflow = await ApprovalWorkflow.create({
-        form_type: 'vehicle_request',
-        name: 'Standard Vehicle Request Workflow',
-        is_active: true,
-        is_default: true,
-        created_by: superAdmin.id,
-        updated_by: superAdmin.id
-      });
-
-      // Create workflow steps for vehicle request (simplified - only department approver)
-      await WorkflowStep.create({
-        workflow_id: vehicleWorkflow.id,
-        step_order: 1,
-        step_name: 'Department Approval',
-        approver_type: 'role',
-        approver_role: 'department_approver',
-        approver_user_id: null,
-        approver_department_id: null,
-        requires_same_department: true,
-        is_required: true,
-        can_skip: false,
-        status_on_approval: 'completed',
-        status_on_completion: 'completed'
-      });
-
-      console.log('✅ Default Vehicle Request workflow initialized');
-    }
-
-    console.log('✅ Default workflows initialized');
-  } catch (error) {
-    console.error('❌ Failed to initialize default workflows:', error);
-    // Don't throw - allow system to continue even if workflows fail to initialize
-  }
-}
 
 // Initialize default categories
 export async function initializeDefaultCategories() {

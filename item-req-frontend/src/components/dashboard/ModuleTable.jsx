@@ -54,7 +54,7 @@ const ReferenceCodeCell = ({ request, user, isPendingApproval }) => {
                         </span>
                     </span>
                 )}
-                {request.reference_code || `SVR-${request.id || request.request_id}`}
+                {request.reference_code || `SVRF-${request.id || request.request_id}`}
 
                 {isAssignedVerifier && (
                     <span className="bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full ml-2 border border-purple-200">To Verify</span>
@@ -84,12 +84,13 @@ const RequestorCell = ({ request }) => {
 };
 
 const StatusCell = ({ request, type, user }) => {
-    const isPendingVerification = type === 'vehicle' && request.status === 'submitted' && request.verification_status === 'pending';
+    // Both item and vehicle requests can have verification
+    const isPendingVerification = request.verification_status === 'pending';
     const isRequestorCompleted = user?.role === 'requestor' && request.status === 'completed';
 
     // If pending verification, override the status color and text for the main badge
     let displayStatus = isPendingVerification ? 'PENDING VERIFICATION' : (request.status ? request.status.replace(/_/g, ' ').toUpperCase() : 'UNKNOWN');
-    if (isRequestorCompleted) {
+    if (isRequestorCompleted && !isPendingVerification) {
         displayStatus = 'APPROVED';
     }
     const color = isPendingVerification ? 'purple' : getStatusColor(request.status, type);
@@ -109,15 +110,15 @@ const StatusCell = ({ request, type, user }) => {
             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${colorClasses[color] || 'bg-gray-100'}`}>
                 {displayStatus}
             </span>
-            {/* Verification Status Badges for Vehicle */}
-            {type === 'vehicle' && request.verification_status === 'verified' && (
+            {/* Verification Status Sub-badges (item & vehicle) */}
+            {!isPendingVerification && request.verification_status === 'verified' && (
                 <div className="mt-1">
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
                         <UserCheck className="w-3 h-3 mr-1" />Verified
                     </span>
                 </div>
             )}
-            {type === 'vehicle' && request.verification_status === 'declined' && (
+            {!isPendingVerification && request.verification_status === 'declined' && (
                 <div className="mt-1">
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200">
                         <XCircle className="w-3 h-3 mr-1" />Verif. Declined
@@ -172,6 +173,62 @@ const AgingCell = ({ request }) => {
     }
 
     return <span className={`text-sm ${colorClass}`}>{displayStr}</span>;
+};
+
+const ServiceDeskAgingCell = ({ request }) => {
+    // Only meaningful for SD-stage and beyond
+    const sdStatuses = ['it_manager_approved', 'service_desk_processing', 'pr_approved', 'ready_to_deploy', 'completed'];
+    if (!sdStatuses.includes(request.status)) {
+        return <span className="text-sm text-gray-400 dark:text-gray-500">-</span>;
+    }
+
+    // sdStartedAt is set once when the request first enters service_desk_processing.
+    // It never resets on subsequent status changes (pr_approved, ready_to_deploy, etc.).
+    // updatedAt is a fallback for requests that were already in SD before this column was added.
+    const rawStart = request.sdStartedAt || request.updatedAt || request.updated_at;
+    const startDate = rawStart ? new Date(rawStart) : null;
+    if (!startDate || isNaN(startDate.getTime())) {
+        return <span className="text-sm text-gray-400">-</span>;
+    }
+
+    // For completed requests, freeze the timer at completed_at
+    let endDate = new Date();
+    if (request.status === 'completed') {
+        const comp = request.completedAt || request.completed_at;
+        if (comp) {
+            const compDate = new Date(comp);
+            if (!isNaN(compDate.getTime())) endDate = compDate;
+        }
+    }
+
+    const diffMs = Math.max(0, endDate - startDate);
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    let display = '';
+    if (diffDays > 0) display += `${diffDays}d `;
+    if (diffHours > 0 || diffDays > 0) display += `${diffHours}h `;
+    display += `${diffMinutes}m`;
+
+    const isCompleted = request.status === 'completed';
+    let colorClass;
+    if (isCompleted) {
+        colorClass = 'text-gray-500 dark:text-gray-400';
+    } else if (diffDays >= 3) {
+        colorClass = 'text-red-600 dark:text-red-400 font-bold';
+    } else if (diffDays >= 1) {
+        colorClass = 'text-orange-500 dark:text-orange-400 font-semibold';
+    } else {
+        colorClass = 'text-green-600 dark:text-green-400 font-medium';
+    }
+
+    return (
+        <span className={`text-sm ${colorClass}`} title="Time in Service Desk stage">
+            {display}
+            {isCompleted && <span className="text-xs ml-1 text-gray-400">(done)</span>}
+        </span>
+    );
 };
 
 const DateCell = ({ request, field }) => {
@@ -302,6 +359,7 @@ const ModuleTable = ({
             case 'ReferenceCodeCell': return ReferenceCodeCell;
             case 'RequestorCell': return RequestorCell;
             case 'StatusCell': return StatusCell;
+            case 'ServiceDeskAgingCell': return ServiceDeskAgingCell;
             case 'AgingCell': return AgingCell;
             case 'DateCell': return DateCell;
             case 'ItemsCountCell': return ItemsCountCell;
@@ -415,39 +473,60 @@ const ModuleTable = ({
                 </table>
             </div>
 
-            {/* Pagination Controls */}
-            {pagination && pagination.pages > 1 && (
-                <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
-                    <div className="flex items-center justify-between">
-                        <div className="text-sm text-gray-700 dark:text-gray-300">
-                            Showing <span className="font-medium">{(pagination.currentPage - 1) * (filters.limit || 10) + 1}</span> to{' '}
-                            <span className="font-medium">
-                                {Math.min(pagination.currentPage * (filters.limit || 10), pagination.total)}
-                            </span>{' '}
-                            of <span className="font-medium">{pagination.total}</span> requests
+            {/* Pagination Controls — always visible */}
+            {pagination && (
+                <div className="px-6 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                    <div className="flex items-center justify-between flex-wrap gap-3">
+
+                        {/* Left: showing info + rows per page */}
+                        <div className="flex items-center gap-4 text-sm text-gray-700 dark:text-gray-300">
+                            <span>
+                                Showing{' '}
+                                <span className="font-medium">
+                                    {pagination.total === 0 ? 0 : (pagination.currentPage - 1) * (filters.limit || 10) + 1}
+                                </span>
+                                {' '}to{' '}
+                                <span className="font-medium">
+                                    {Math.min(pagination.currentPage * (filters.limit || 10), pagination.total)}
+                                </span>
+                                {' '}of{' '}
+                                <span className="font-medium">{pagination.total}</span> requests
+                            </span>
+
+                            {/* Rows per page selector */}
+                            <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400">
+                                Rows per page:
+                                <select
+                                    value={filters.limit || 10}
+                                    onChange={(e) => setFilters(prev => ({ ...prev, limit: parseInt(e.target.value), page: 1 }))}
+                                    className="ml-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                                >
+                                    {[10, 20, 30, 50, 100].map(n => (
+                                        <option key={n} value={n}>{n}</option>
+                                    ))}
+                                </select>
+                            </label>
                         </div>
 
+                        {/* Right: page nav buttons */}
                         <div className="flex items-center space-x-2">
                             <button
                                 onClick={() => setFilters(prev => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
                                 disabled={pagination.currentPage === 1}
-                                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                                className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center"
                             >
                                 <ChevronLeft className="h-4 w-4 mr-1" />
                                 Previous
                             </button>
 
-                            <div className="flex items-center space-x-1">
-                                {/* Simplified Pagination for now */}
-                                <span className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
-                                    Page {pagination.currentPage} of {pagination.pages}
-                                </span>
-                            </div>
+                            <span className="px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300">
+                                Page <span className="font-medium">{pagination.currentPage}</span> of <span className="font-medium">{Math.max(1, pagination.pages)}</span>
+                            </span>
 
                             <button
-                                onClick={() => setFilters(prev => ({ ...prev, page: Math.min(pagination.pages, prev.page + 1) }))}
-                                disabled={pagination.currentPage === pagination.pages}
-                                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                                onClick={() => setFilters(prev => ({ ...prev, page: Math.min(Math.max(1, pagination.pages), prev.page + 1) }))}
+                                disabled={pagination.currentPage >= pagination.pages}
+                                className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center"
                             >
                                 Next
                                 <ChevronRight className="h-4 w-4 ml-1" />

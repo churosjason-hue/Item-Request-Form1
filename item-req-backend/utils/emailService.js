@@ -75,7 +75,7 @@ class EmailService {
     }
   }
 
-  async sendEmail(to, subject, html, text = null, attachments = []) {
+  async sendEmail(to, subject, html, text = null, attachments = [], cc = null) {
     if (!this.transporter) {
       console.error('❌ Email transporter not initialized');
       return { success: false, error: 'Email service not configured' };
@@ -85,6 +85,7 @@ class EmailService {
       const mailOptions = {
         from: process.env.EMAIL_FROM || 'noreply@example.com',
         to: Array.isArray(to) ? to.join(', ') : to,
+        cc: cc ? (Array.isArray(cc) ? cc.join(', ') : cc) : undefined,
         subject,
         html,
         text: text || this.htmlToText(html),
@@ -495,6 +496,121 @@ class EmailService {
     `;
   }
 
+  getVerifierAssignedTemplate(request, requestor, verifier, reason) {
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background-color: #8b5cf6; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+          .content { background-color: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; }
+          .info-row { margin: 10px 0; }
+          .label { font-weight: bold; color: #4b5563; }
+          .comments { background-color: #ede9fe; padding: 15px; border-left: 4px solid #8b5cf6; margin: 15px 0; }
+          .button { display: inline-block; padding: 10px 20px; background-color: #8b5cf6; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }
+          .footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h2>Action Required: Verification Assignment</h2>
+          </div>
+          <div class="content">
+            <p>Hello ${verifier.first_name} ${verifier.last_name},</p>
+            <p>You have been assigned as a temporary verifier for an equipment request.</p>
+            
+            <div class="info-row">
+              <span class="label">Request Number:</span> ${request.request_number}
+            </div>
+            <div class="info-row">
+              <span class="label">Requested By:</span> ${requestor.first_name} ${requestor.last_name}
+            </div>
+            
+            ${reason ? `
+            <div class="comments">
+              <strong>Reason for Assignment:</strong><br>
+              ${reason}
+            </div>
+            ` : ''}
+            
+            <p>Please review the request details and provide your verification decision.</p>
+            
+            <a href="${this.getFrontendUrl()}/requests/${request.id}" class="button">View Request</a>
+          </div>
+          <div class="footer">
+            <p>This is an automated notification. Please do not reply to this email.</p>
+            <p style="margin-top: 10px;">
+              <a href="${process.env.FRONTEND_URL || this.getFrontendUrl()}/login" style="color: #8b5cf6; text-decoration: underline;">Access Login Portal</a>
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  getVerificationCompletedTemplate(request, requestor, verifier, status, comments) {
+    const isVerified = status === 'verified';
+    const headerColor = isVerified ? '#10b981' : '#ef4444'; // Green for verified, Red for declined
+    const titleText = isVerified ? 'Request Verified' : 'Request Verification Declined';
+    const commentBgColor = isVerified ? '#d1fae5' : '#fee2e2';
+    const commentBorderColor = isVerified ? '#10b981' : '#ef4444';
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background-color: ${headerColor}; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+          .content { background-color: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; }
+          .info-row { margin: 10px 0; }
+          .label { font-weight: bold; color: #4b5563; }
+          .comments { background-color: ${commentBgColor}; padding: 15px; border-left: 4px solid ${commentBorderColor}; margin: 15px 0; }
+          .button { display: inline-block; padding: 10px 20px; background-color: ${headerColor}; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }
+          .footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h2>${titleText}</h2>
+          </div>
+          <div class="content">
+            <p>Hello,</p>
+            <p>The equipment request <strong>${request.request_number}</strong> has been <strong>${status}</strong> by the assigned verifier (${verifier.first_name} ${verifier.last_name}).</p>
+            
+            <div class="info-row">
+              <span class="label">Requested By:</span> ${requestor.first_name} ${requestor.last_name}
+            </div>
+            
+            ${comments ? `
+            <div class="comments">
+              <strong>Verifier Remarks:</strong><br>
+              ${comments}
+            </div>
+            ` : ''}
+            
+            <p>Please review the request details for next steps.</p>
+            
+            <a href="${this.getFrontendUrl()}/requests/${request.id}" class="button">View Request Details</a>
+          </div>
+          <div class="footer">
+            <p>This is an automated notification. Please do not reply to this email.</p>
+            <p style="margin-top: 10px;">
+              <a href="${process.env.FRONTEND_URL || this.getFrontendUrl()}/login" style="color: ${headerColor}; text-decoration: underline;">Access Login Portal</a>
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
   getVehicleRequestCancelledTemplate(vehicleRequest, requestor, odhcUser, reason) {
     const requestorName = requestor.first_name && requestor.last_name
       ? `${requestor.first_name} ${requestor.last_name}`
@@ -586,7 +702,7 @@ class EmailService {
     return await this.sendEmail(approver.email, subject, html);
   }
 
-  async notifyRequestApproved(request, requestor, approver, stage) {
+  async notifyRequestApproved(request, requestor, approver, stage, ccEmails = null) {
     if (!requestor.email) {
       console.log(`⚠️ Skipping email - requestor ${requestor.username} has no email`);
       return;
@@ -595,7 +711,7 @@ class EmailService {
     const subject = `Request Approved: ${request.request_number}`;
     const html = this.getRequestApprovedTemplate(request, requestor, approver, stage);
 
-    return await this.sendEmail(requestor.email, subject, html);
+    return await this.sendEmail(requestor.email, subject, html, null, [], ccEmails);
   }
 
   async notifyRequestDeclined(request, requestor, approver, comments) {
@@ -620,6 +736,34 @@ class EmailService {
     const html = this.getRequestReturnedTemplate(request, requestor, approver, returnReason);
 
     return await this.sendEmail(requestor.email, subject, html);
+  }
+
+  async notifyVerifierAssigned(request, requestor, verifier, reason) {
+    if (!verifier.email) {
+      console.log(`⚠️ Skipping email - verifier ${verifier.username} has no email`);
+      return;
+    }
+
+    return await this.sendEmail(verifier.email, subject, html);
+  }
+
+  async notifyVerificationCompleted(request, requestor, verifier, status, comments, itManagers = []) {
+    if (!requestor.email) {
+      console.log(`⚠️ Skipping email - requestor ${requestor.username} has no email`);
+      return;
+    }
+
+    const actionText = status === 'verified' ? 'Verified' : 'Verification Declined';
+    const subject = `Request ${actionText}: ${request.request_number}`;
+    const html = this.getVerificationCompletedTemplate(request, requestor, verifier, status, comments);
+
+    // CC IT Managers so they are immediately aware of the verifier's decision
+    const ccEmails = itManagers
+      .filter(mgr => mgr.email)
+      .map(mgr => mgr.email)
+      .join(', ');
+
+    return await this.sendEmail(requestor.email, subject, html, null, [], ccEmails ? ccEmails : undefined);
   }
 
   // Vehicle Request Email Methods

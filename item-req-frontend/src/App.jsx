@@ -13,9 +13,12 @@ import ServiceVehicleRequestForm from './components/requests/ServiceVehicleReque
 import FormSelector from './components/requests/FormSelector';
 import WorkflowSettings from './components/admin/WorkflowSettings';
 import ApprovalMatrixSettings from './components/admin/ApprovalMatrixSettings';
+import WorkflowSetup from './components/admin/WorkflowSetup';
 import AuditLogs from './components/audit/AuditLogs';
 import DeployedAssets from './components/inventory/DeployedAssets';
 import InventoryManagement from './components/admin/InventoryManagement';
+import RoleUIConfig from './components/admin/RoleUIConfig';
+import ApiKeysPage from './components/admin/ApiKeysPage';
 
 import ModuleRequestsPage from './components/requests/ModuleRequestsPage';
 import { MODULES } from './config/modules';
@@ -99,9 +102,12 @@ function AppRoutes() {
         <Route path="/departments" element={<DepartmentManagement />} />
         <Route path="/settings/workflows" element={<WorkflowSettings />} />
         <Route path="/settings/approval-matrix" element={<ApprovalMatrixSettings />} />
+        <Route path="/settings/workflow-setup" element={<WorkflowSetup />} />
         <Route path="/audit-logs" element={<AuditLogs />} />
         <Route path="/deployed-assets" element={<DeployedAssets />} />
         <Route path="/inventory" element={<InventoryManagement />} />
+        <Route path="/settings/role-access" element={<RoleUIConfig />} />
+        <Route path="/settings/api-keys" element={<ApiKeysPage />} />
       </Route>
 
       {/* Default redirect */}
@@ -124,7 +130,7 @@ function App() {
             <div className="App dark:bg-gray-900 dark:text-gray-100 min-h-screen transition-colors duration-200">
               <Toast />
               <AppRoutes />
-              <ChatbotWidget />
+              <div className="no-print"><ChatbotWidget /></div>
             </div>
           </Router>
         </AuthProvider>
