@@ -160,34 +160,70 @@ export const MODULES = {
             const approverRolesV = ['department_approver', 'endorser', 'it_manager', 'service_desk', 'super_administrator'];
             if (!approverRolesV.includes(user.role)) {
                 cards.push(
-                    { title: 'My Drafts', count: stats.draft || 0, icon: FileText, color: 'gray' },
-                    { title: 'Returned', count: stats.returned || 0, icon: RotateCcw, color: 'orange' },
-                    { title: 'Pending Approval', count: stats.submitted || 0, icon: Clock, color: 'yellow' },
-                    { title: 'Department Approved', count: stats.department_approved || 0, icon: CheckCircle, color: 'green' },
-                    { title: 'Declined', count: stats.declined || 0, icon: XCircle, color: 'red' },
-                    { title: 'Completed', count: stats.completed || 0, icon: CheckCircle, color: 'blue' },
-                    { title: 'Total Requests', count: stats.total || 0, icon: Car, color: 'gray' }
+                    { title: 'My Drafts', count: stats.draft || 0, icon: FileText, color: 'gray', filterStatus: 'draft' },
+                    { title: 'Returned', count: stats.returned || 0, icon: RotateCcw, color: 'orange', filterStatus: 'returned' },
+                    { title: 'Pending Approval', count: stats.submitted || 0, icon: Clock, color: 'yellow', filterStatus: 'submitted' },
+                    { title: 'Department Approved', count: stats.department_approved || 0, icon: CheckCircle, color: 'green', filterStatus: 'department_approved' },
+                    { title: 'Declined', count: stats.declined || 0, icon: XCircle, color: 'red', filterStatus: 'declined' },
+                    { title: 'Completed', count: stats.completed || 0, icon: CheckCircle, color: 'blue', filterStatus: 'completed' },
+                    { title: 'Total Requests', count: stats.total || 0, icon: Car, color: 'gray', filterStatus: 'all' }
                 );
             } else if (user.role === 'department_approver') {
                 const deptCards = [
-                    { title: 'Pending My Approval', count: isODHC ? ((stats.submitted || 0) + (stats.department_approved || 0)) : (stats.submitted || 0), icon: AlertCircle, color: 'orange' },
-                    { title: isODHC ? 'Department Approved' : 'Approved by Me', count: stats.department_approved || 0, icon: CheckCircle, color: 'green' },
-                    { title: 'Returned', count: stats.returned || 0, icon: RotateCcw, color: 'orange' },
-                    { title: 'Declined', count: stats.declined || 0, icon: XCircle, color: 'red' },
-                    { title: 'Completed', count: stats.completed || 0, icon: CheckCircle, color: 'blue' },
-                    { title: 'Total Requests', count: stats.total || 0, icon: Car, color: 'gray' }
+                    { title: 'Pending My Approval', count: isODHC ? ((stats.submitted || 0) + (stats.department_approved || 0)) : (stats.submitted || 0), icon: AlertCircle, color: 'orange', filterStatus: 'pending_my_approval' },
+                    { title: isODHC ? 'Department Approved' : 'Approved by Me', count: stats.department_approved || 0, icon: CheckCircle, color: 'green', filterStatus: 'department_approved' },
+                    { title: 'Returned', count: stats.returned || 0, icon: RotateCcw, color: 'orange', filterStatus: 'returned' },
+                    { title: 'Declined', count: stats.declined || 0, icon: XCircle, color: 'red', filterStatus: 'declined' },
+                    { title: 'Completed', count: stats.completed || 0, icon: CheckCircle, color: 'blue', filterStatus: 'completed' },
+                    { title: 'Total Requests', count: stats.total || 0, icon: Car, color: 'gray', filterStatus: 'all' }
                 ];
 
                 if (isODHC) {
                     deptCards.unshift(
-                        { title: 'Pending Verification', count: verificationStats.pending || 0, icon: UserCheck, color: 'purple' },
-                        { title: 'Verif. Declined', count: verificationStats.declined || 0, icon: XCircle, color: 'red' }
+                        { title: 'Pending Verification', count: verificationStats.pending || 0, icon: UserCheck, color: 'purple', filterStatus: 'pending_verification' },
+                        { title: 'Verif. Declined', count: verificationStats.declined || 0, icon: XCircle, color: 'red', filterStatus: 'verification_declined' }
                     );
                 }
                 cards.push(...deptCards);
+            } else if (user.role === 'it_manager') {
+                const itManagerCards = [
+                    { title: 'Pending My Approval', count: stats.department_approved || 0, icon: AlertCircle, color: 'orange', filterStatus: 'pending_my_approval' },
+                    { title: 'Approved by Me', count: stats.it_manager_approved || 0, icon: CheckCircle, color: 'green', filterStatus: 'it_manager_approved' },
+                    { title: 'Returned', count: stats.returned || 0, icon: RotateCcw, color: 'orange', filterStatus: 'returned' },
+                    { title: 'Declined', count: stats.declined || 0, icon: XCircle, color: 'red', filterStatus: 'declined' },
+                    { title: 'Completed', count: stats.completed || 0, icon: CheckCircle, color: 'blue', filterStatus: 'completed' },
+                    { title: 'Total Requests', count: stats.total || 0, icon: Car, color: 'gray', filterStatus: 'all' }
+                ];
+                cards.push(...itManagerCards);
+            } else if (user.role === 'service_desk') {
+                const sdCards = [
+                    { title: 'Pending Processing', count: stats.it_manager_approved || 0, icon: AlertCircle, color: 'orange', filterStatus: 'pending_my_approval' },
+                    { title: 'Processing', count: stats.service_desk_processing || 0, icon: Clock, color: 'yellow', filterStatus: 'service_desk_processing' },
+                    { title: 'Completed', count: stats.completed || 0, icon: CheckCircle, color: 'blue', filterStatus: 'completed' },
+                    { title: 'Total Requests', count: stats.total || 0, icon: Car, color: 'gray', filterStatus: 'all' }
+                ];
+                cards.push(...sdCards);
+            } else if (user.role === 'endorser') {
+                const endorserCards = [
+                    { title: 'Pending My Check', count: stats.department_approved || 0, icon: AlertCircle, color: 'orange', filterStatus: 'pending_my_approval' },
+                    { title: 'Checked/Endorsed', count: stats.checked_endorsed || 0, icon: CheckCircle, color: 'green', filterStatus: 'checked_endorsed' },
+                    { title: 'Returned', count: stats.returned || 0, icon: RotateCcw, color: 'orange', filterStatus: 'returned' },
+                    { title: 'Declined', count: stats.declined || 0, icon: XCircle, color: 'red', filterStatus: 'declined' },
+                    { title: 'Completed', count: stats.completed || 0, icon: CheckCircle, color: 'blue', filterStatus: 'completed' },
+                    { title: 'Total Requests', count: stats.total || 0, icon: Car, color: 'gray', filterStatus: 'all' }
+                ];
+                cards.push(...endorserCards);
+            } else if (user.role === 'super_administrator') {
+                cards.push(
+                    { title: 'Pending Approvals', count: (stats.submitted || 0) + (stats.department_approved || 0) + (stats.it_manager_approved || 0) + (stats.service_desk_processing || 0), icon: Clock, color: 'yellow', filterStatus: 'pending_my_approval' },
+                    { title: 'Returned', count: stats.returned || 0, icon: RotateCcw, color: 'orange', filterStatus: 'returned' },
+                    { title: 'Declined', count: stats.declined || 0, icon: XCircle, color: 'red', filterStatus: 'declined' },
+                    { title: 'Completed', count: stats.completed || 0, icon: CheckCircle, color: 'blue', filterStatus: 'completed' },
+                    { title: 'Total Requests', count: stats.total || 0, icon: Car, color: 'gray', filterStatus: 'all' }
+                );
             } else {
                 cards.push(
-                    { title: 'Total Vehicle Requests', count: stats.total || 0, icon: Car, color: 'blue' }
+                    { title: 'Total Vehicle Requests', count: stats.total || 0, icon: Car, color: 'blue', filterStatus: 'all' }
                 );
             }
             return cards;

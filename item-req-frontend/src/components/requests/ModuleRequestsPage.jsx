@@ -136,7 +136,15 @@ const ModuleRequestsPage = ({ moduleConfig }) => {
 
         const tableBody = selectedData.map(req => {
             const vehicle = req.AssignedVehicle || {};
-            const vehicleMakeModel = vehicle.make && vehicle.model ? `${vehicle.make} ${vehicle.model}` : (req.destination_car || '-');
+            let vehicleMakeModel = req.destination_car || '-';
+
+            // If the custom "other" string is provided, use it. Otherwise try to use the relation.
+            if (req.assigned_vehicle_other) {
+                vehicleMakeModel = req.assigned_vehicle_other;
+            } else if (vehicle.make && vehicle.model) {
+                vehicleMakeModel = `${vehicle.make} ${vehicle.model}`;
+            }
+
             const plateNumber = vehicle.plate || '-';
             const driver = req.assigned_driver || '-';
 

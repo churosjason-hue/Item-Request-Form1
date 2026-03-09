@@ -8,6 +8,7 @@ export default function TripDetails({
     isViewing,
     getInputProps,
     handleChange,
+    user,
     passengerActions // { add, remove, change }
 }) {
     const getConditionalConfig = () => {
@@ -43,7 +44,8 @@ export default function TripDetails({
                     { name: "drop_off_time", label: "Drop-Off Time", type: "time", span: 1 },
                     { name: "destination", label: "Destination (Please specify the location in cases where multiple destinations are applicable.)", type: "text", span: 2 },
                 ],
-                showPassengers: false,
+                showPassengers: true,
+                passengerLabel: "Optional Passengers (For Department Approvers)",
             },
             item_delivery: {
                 title: "ACCOMPLISH THIS PART IF REQUEST IS ITEM DELIVERY",
@@ -82,6 +84,10 @@ export default function TripDetails({
 
     const config = getConditionalConfig();
     if (!config) return null;
+
+    // For item_pickup, passengers can ONLY be added by department approver or super admin
+    const isApproverOrAdmin = user?.role === 'department_approver' || user?.role === 'super_administrator';
+    const isPassengerViewing = (formData.request_type === 'item_pickup' && !isApproverOrAdmin) ? true : isViewing;
 
     return (
         <div className="space-y-4">
@@ -125,16 +131,21 @@ export default function TripDetails({
 
                 {/* Passengers Section */}
                 {config.showPassengers && (
-                    <PassengerList
-                        passengers={formData.passengers}
-                        onAdd={passengerActions.add}
-                        onRemove={passengerActions.remove}
-                        onChange={passengerActions.change}
-                        loading={loading}
-                        errors={errors}
-                        isViewing={isViewing}
-                        getInputProps={getInputProps}
-                    />
+                    <div className="mt-4">
+                        {config.passengerLabel && (
+                            <div className="text-xs font-semibold text-gray-600 mb-1">{config.passengerLabel}</div>
+                        )}
+                        <PassengerList
+                            passengers={formData.passengers}
+                            onAdd={passengerActions.add}
+                            onRemove={passengerActions.remove}
+                            onChange={passengerActions.change}
+                            loading={loading}
+                            errors={errors}
+                            isViewing={isPassengerViewing}
+                            getInputProps={getInputProps}
+                        />
+                    </div>
                 )}
             </div>
         </div>

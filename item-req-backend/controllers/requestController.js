@@ -6,20 +6,23 @@ import { processWorkflowOnSubmit, findCurrentStepForApprover, processWorkflowOnA
 import { logAudit, calculateChanges } from '../utils/auditLogger.js';
 import emailService from '../utils/emailService.js';
 
-// Generate sequential reference ID (ITR-MMDD-00001)
-export async function generateReferenceId() {
+// Generate sequential reference ID (ITR-MMDD-00001 or TMP-ITR-MMDD-00001)
+export async function generateReferenceId(isTemporary = false) {
     const now = new Date();
     // const year = String(now.getFullYear()).slice(-2); // YY - removed as per request
     const month = String(now.getMonth() + 1).padStart(2, '0'); // MM
     const day = String(now.getDate()).padStart(2, '0'); // DD
-    // Prefix format for current request: ITR-MMDD-
-    const currentPrefix = `ITR-${month}${day}-`;
+
+    // Prefix format for current request: ITR-MMDD- or TMP-ITR-MMDD-
+    const basePrefix = isTemporary ? 'TMP-ITR-' : 'ITR-';
+    const currentPrefix = `${basePrefix}${month}${day}-`;
 
     // Find last request globally (to keep sequence continuous)
+    // We only want to search within our own sequence (TMP-ITR- vs ITR-)
     const lastRequest = await Request.findOne({
         where: {
             request_number: {
-                [Op.like]: `ITR-%`
+                [Op.like]: `${basePrefix}%`
             }
         },
         order: [['created_at', 'DESC']],
@@ -28,11 +31,11 @@ export async function generateReferenceId() {
 
     let sequence = 1;
     if (lastRequest && lastRequest.request_number) {
-        // Expected format: ITR-MMDD-XXXXX
+        // Expected format: [TMP-]ITR-MMDD-XXXXX
+        // Since both have the same number of hyphens relative to their prefix, we can just grab the last token
         const parts = lastRequest.request_number.split('-');
-        if (parts.length === 3) {
-            sequence = parseInt(parts[2], 10) + 1;
-        }
+        const sequenceStr = parts[parts.length - 1]; // "XXXXX"
+        sequence = parseInt(sequenceStr, 10) + 1;
     }
 
     return `${currentPrefix}${String(sequence).padStart(5, '0')}`;
@@ -470,13 +473,27 @@ export const getRequestById = async (req, res) => {
         }
 
         // Check access permissions for non-draft requests
-        let canAccess =
-            req.user.role === 'super_administrator' ||
-            req.user.role === 'it_manager' ||
-            req.user.role === 'endorser' ||
-            req.user.role === 'service_desk' ||
-            request.requestor_id === req.user.id ||
-            request.verifier_id === req.user.id; // assigned verifier can always view
+        let canAccess = false;
+
+        if (req.user.role === 'super_administrator') {
+            canAccess = true;
+        } else if (request.requestor_id === req.user.id) {
+            canAccess = true;
+        } else if (request.verifier_id === req.user.id) {
+            // assigned verifier can always view
+            canAccess = true;
+        } else if (request.pending_approver_ids && request.pending_approver_ids.includes(req.user.id)) {
+            // they are currently assigned to approve this step
+            canAccess = true;
+        } else {
+            // they were an approver in the past
+            const pastApproval = await Approval.findOne({
+                where: { request_id: request.id, approver_id: req.user.id }
+            });
+            if (pastApproval) {
+                canAccess = true;
+            }
+        }
 
         // For department_approver: dynamically check ApprovalMatrix scoped to item_request
         // IMPORTANT: must filter by form_type so vehicle_request global rules don't bleed in
@@ -678,7 +695,7 @@ export const createRequest = async (req, res) => {
 
         // Create request
         const request = await Request.create({
-            request_number: await generateReferenceId(),
+            request_number: await generateReferenceId(true), // Use temporary ID initially
             requestor_id: req.user.id,
             user_name: userName || `${req.user.first_name} ${req.user.last_name}`,
             user_position: userPosition || req.user.title,
@@ -1355,14 +1372,38 @@ export const approveRequest = async (req, res) => {
                     : new Date())                                               // fresh transition
                 : undefined;
 
-            // Update request status
+            // If transitioning to department_approved from a temporary ID, assign official ID
+            let oldRequestNumber = null;
+            let newRequestNumber = null;
+            if (newStatus === 'department_approved' && request.request_number.startsWith('TMP-ITR-')) {
+                oldRequestNumber = request.request_number;
+                newRequestNumber = await generateReferenceId(false);
+                console.log(`🔄 Upgrading Request ID from ${oldRequestNumber} to ${newRequestNumber}`);
+            }
+
+            // Update request status (and number if upgraded)
             await request.update({
                 status: newStatus,
+                ...(newRequestNumber && { request_number: newRequestNumber }),
                 current_step_id: request.current_step_id,
                 pending_approver_ids: request.pending_approver_ids,
                 ...(newStatus === 'completed' && { completed_at: new Date() }),
                 ...(sdStartedAtValue !== undefined && { sd_started_at: sdStartedAtValue })
             });
+
+            if (newRequestNumber) {
+                await logAudit({
+                    req,
+                    action: 'UPDATE',
+                    entityType: 'Request',
+                    entityId: request.id,
+                    details: {
+                        changes: {
+                            request_number: `Upgraded from ${oldRequestNumber} to ${newRequestNumber}`
+                        }
+                    }
+                });
+            }
 
             // Decrement Stock if Completed
             if (newStatus === 'completed') {
@@ -1442,15 +1483,18 @@ export const approveRequest = async (req, res) => {
 
             // Send email notifications
             try {
-                // Fetch IT Managers to CC
-                const itManagers = await User.findAll({
-                    where: { role: 'it_manager' },
-                    attributes: ['email']
-                });
-                const ccEmails = itManagers.map(manager => manager.email).filter(Boolean);
+                // Fetch IT Managers to CC if approval type is department_approval
+                let bccEmails = null;
+                if (approvalType === 'department_approval') {
+                    const itManagers = await User.findAll({
+                        where: { role: 'it_manager' },
+                        attributes: ['email']
+                    });
+                    bccEmails = itManagers.map(manager => manager.email).filter(Boolean);
+                }
 
-                // Notify requestor of approval and CC IT Managers
-                await emailService.notifyRequestApproved(request, request.Requestor, req.user, approvalType, ccEmails);
+                // Notify requestor of approval and BCC IT Managers (if applicable)
+                await emailService.notifyRequestApproved(request, request.Requestor, req.user, approvalType, bccEmails);
 
                 // Notify ALL next approvers
                 for (const approver of nextApprovers) {

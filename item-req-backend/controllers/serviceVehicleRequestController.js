@@ -6,6 +6,7 @@ import {
     Department,
     Vehicle,
     VehicleApproval,
+    ApprovalMatrix,
     sequelize,
 } from "../models/index.js";
 import {
@@ -88,14 +89,17 @@ export const getAllRequests = async (req, res) => {
         const offset = (parseInt(page) - 1) * parseInt(limit);
 
         let roleAccessClause = {};
+        let excludeDrafts = false;
 
         // Role-based filtering
         // NOTE: For service vehicle requests, IT managers are NOT the managing dept
-        // (that's ODHC). So IT managers only see their own requests, like requestors.
+        // (that's ODHC). So IT managers only see requests they approved/are assigned to.
         // Only super_administrator has unrestricted access.
         if (req.user.role === 'super_administrator') {
             // Unrestricted access — whereClause stays empty
+            excludeDrafts = true;
         } else if (req.user.role === 'department_approver') {
+            excludeDrafts = true;
             // Check if user is from the ODHC (vehicle steward) department
             const odhcDepartment = await Department.findOne({
                 where: { is_vehicle_steward: true, is_active: true },
@@ -111,10 +115,54 @@ export const getAllRequests = async (req, res) => {
                 };
             } else {
                 // Non-ODHC dept approver: see only their own requests + verifier assignments
-                roleAccessClause = { requested_by: req.user.id };
+                // PLUS any departments they are assigned to via ApprovalMatrix
+                const matrixRules = await ApprovalMatrix.findAll({
+                    where: { user_id: req.user.id, is_active: true, form_type: 'vehicle_request' },
+                    attributes: ['department_id']
+                });
+
+                const hasGlobalRule = matrixRules.some(r => r.department_id === null);
+
+                if (hasGlobalRule) {
+                    roleAccessClause = {}; // See all requests (excluding drafts)
+                } else {
+                    const assignedDeptIds = new Set(
+                        matrixRules.map(r => r.department_id).filter(id => id != null)
+                    );
+                    if (req.user.department_id) assignedDeptIds.add(req.user.department_id);
+
+                    if (assignedDeptIds.size > 0) {
+                        roleAccessClause = { department_id: { [Op.in]: Array.from(assignedDeptIds) } };
+                    } else {
+                        roleAccessClause = { requested_by: req.user.id };
+                    }
+                }
+            }
+        } else if (['it_manager', 'endorser', 'service_desk'].includes(req.user.role)) {
+            excludeDrafts = true;
+            // DYNAMIC: Show requests where this user is or was an approver
+            const myApprovals = await VehicleApproval.findAll({
+                where: { approver_id: req.user.id },
+                attributes: ['vehicle_request_id']
+            });
+            const myRequestIds = [...new Set(myApprovals.map(a => a.vehicle_request_id))];
+
+            roleAccessClause = {
+                [Op.or]: [
+                    ...(myRequestIds.length > 0 ? [{ id: { [Op.in]: myRequestIds } }] : []),
+                    sequelize.where(
+                        sequelize.literal(`${req.user.id} = ANY(pending_approver_ids)`),
+                        true
+                    )
+                ]
+            };
+
+            if (roleAccessClause[Op.or].length === 0) {
+                // No past approvals and no pending — show nothing
+                roleAccessClause = { id: -1 };
             }
         } else {
-            // All other roles (including it_manager): can only see their own requests
+            // All other roles (e.g. requestor): can only see their own requests
             roleAccessClause.requested_by = req.user.id;
         }
 
@@ -123,13 +171,42 @@ export const getAllRequests = async (req, res) => {
         if (req.user.role === 'super_administrator') {
             // Unrestricted — no filter
         } else {
-            whereClause = {
-                [Op.or]: [
-                    roleAccessClause,
-                    { verifier_id: req.user.id, verification_status: 'pending' },
-                    { requested_by: req.user.id } // always see your own requests
-                ]
-            };
+            // Handle global case (roleAccessClause is empty object)
+            const isRoleAccessEmpty = Object.keys(roleAccessClause).length === 0 && Object.getOwnPropertySymbols(roleAccessClause).length === 0;
+            if (isRoleAccessEmpty) {
+                // User has global read access
+                whereClause = {};
+            } else {
+                whereClause = {
+                    [Op.or]: [
+                        roleAccessClause,
+                        { verifier_id: req.user.id, verification_status: 'pending' },
+                        { requested_by: req.user.id } // always see your own requests
+                    ]
+                };
+            }
+
+            // Exclude drafts unless they requested it
+            if (excludeDrafts) {
+                const isWhereEmpty = Object.keys(whereClause).length === 0 && Object.getOwnPropertySymbols(whereClause).length === 0;
+                if (isWhereEmpty) {
+                    whereClause = {
+                        [Op.or]: [
+                            { status: { [Op.ne]: 'draft' } },
+                            { requested_by: req.user.id, status: 'draft' }
+                        ]
+                    };
+                } else if (whereClause[Op.or]) {
+                    // Inject draft exclusion directly into the OR blocks
+                    whereClause[Op.or] = whereClause[Op.or].map(condition => {
+                        if (condition.requested_by === req.user.id || (condition.requested_by && condition.requested_by[Op.in])) {
+                            return condition; // Own request block remains unchanged
+                        }
+                        // Non-owned condition gets non-draft wrapper
+                        return { [Op.and]: [condition, { status: { [Op.ne]: 'draft' } }] };
+                    });
+                }
+            }
         }
 
         // Status filter
@@ -323,8 +400,6 @@ export const getRequestById = async (req, res) => {
         }
 
         // Check access permissions
-        // For service vehicle requests: only ODHC dept approvers + super_admin see all.
-        // IT managers only see their own requests.
         let hasAccess = false;
 
         if (req.user.id === request.requested_by) {
@@ -333,19 +408,44 @@ export const getRequestById = async (req, res) => {
         } else if (req.user.role === 'super_administrator') {
             // Super admins can see all requests
             hasAccess = true;
-        } else if (req.user.role === 'department_approver') {
-            // Only ODHC dept approvers have broad access to vehicle requests
-            const odhcDepartment = await Department.findOne({
-                where: { is_vehicle_steward: true, is_active: true },
-            });
-            if (odhcDepartment && req.user.department_id === odhcDepartment.id) {
-                hasAccess = true;
-            }
-        }
-
-        if (request.verifier_id === req.user.id && request.verification_status === 'pending') {
-            // Assigned verifier can see request
+        } else if (request.pending_approver_ids && request.pending_approver_ids.includes(req.user.id)) {
+            // Currently assigned approver
             hasAccess = true;
+        } else if (request.verifier_id === req.user.id) {
+            // Assigned verifier can see request (even after verification)
+            hasAccess = true;
+        } else {
+            // Check past approvals
+            const pastApproval = await VehicleApproval.findOne({
+                where: { vehicle_request_id: request.id, approver_id: req.user.id }
+            });
+            if (pastApproval) {
+                hasAccess = true;
+            } else if (req.user.role === 'department_approver') {
+                // Check if ODHC vehicle steward
+                const odhcDepartment = await Department.findOne({
+                    where: { is_vehicle_steward: true, is_active: true },
+                });
+                if (odhcDepartment && req.user.department_id === odhcDepartment.id) {
+                    hasAccess = true;
+                } else {
+                    // Check ApprovalMatrix assignment for this specific department
+                    const matrixRule = await ApprovalMatrix.findOne({
+                        where: {
+                            user_id: req.user.id,
+                            is_active: true,
+                            form_type: 'vehicle_request',
+                            [Op.or]: [
+                                { department_id: request.department_id },
+                                { department_id: null } // Global rule
+                            ]
+                        }
+                    });
+                    if (matrixRule || req.user.department_id === request.department_id) {
+                        hasAccess = true;
+                    }
+                }
+            }
         }
 
         if (!hasAccess) {

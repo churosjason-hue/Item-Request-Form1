@@ -106,7 +106,7 @@ const VehicleApproval = sequelize.define('VehicleApproval', {
 });
 
 // Instance methods
-VehicleApproval.prototype.approve = function(comments = null) {
+VehicleApproval.prototype.approve = function (comments = null) {
   this.status = 'approved';
   this.comments = comments;
   this.approved_at = new Date();
@@ -114,7 +114,7 @@ VehicleApproval.prototype.approve = function(comments = null) {
   this.returned_at = null;
 };
 
-VehicleApproval.prototype.decline = function(comments = null) {
+VehicleApproval.prototype.decline = function (comments = null) {
   this.status = 'declined';
   this.comments = comments;
   this.declined_at = new Date();
@@ -122,7 +122,7 @@ VehicleApproval.prototype.decline = function(comments = null) {
   this.returned_at = null;
 };
 
-VehicleApproval.prototype.returnForRevision = function(reason) {
+VehicleApproval.prototype.returnForRevision = function (reason) {
   this.status = 'returned';
   this.return_reason = reason;
   this.returned_at = new Date();

@@ -445,10 +445,8 @@ router.get("/availability", authenticateToken, async (req, res) => {
       .filter(v => bookedVehicleIds.includes(v.id))
       .map(v => ({ ...v.toJSON(), conflict: vehicleConflictMap[v.id] || null }));
 
-    // Filter out booked drivers (matched by name, case-insensitive)
-    const availableDrivers = allDrivers.filter(d => {
-      return !bookedDriverNames.some(booked => booked.toLowerCase() === d.name.toLowerCase());
-    });
+    // Drivers are no longer filtered by booking status, all drivers are available
+    const availableDrivers = allDrivers;
 
     // ── UVVRP (Unified Vehicular Volume Reduction Program) Coding Check ──
     // Peak hours: 7:00 AM–10:00 AM and 5:00 PM–8:00 PM, Mon–Fri (excluding holidays)

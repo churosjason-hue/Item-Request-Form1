@@ -1453,6 +1453,7 @@ export default function ServiceVehicleRequestForm() {
                   isViewing={isViewing}
                   getInputProps={getInputProps}
                   handleChange={handleChange}
+                  user={user}
                   passengerActions={{
                     add: addPassenger,
                     remove: removePassenger,

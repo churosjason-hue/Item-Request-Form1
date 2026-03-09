@@ -51,12 +51,12 @@ const RequestForm = () => {
   const isViewing = !!id && !isEditing;
   const isCreating = !id;
 
-  // Helper to calculate 10 working days from now
-  const calculateTenWorkingDays = () => {
+  // Helper to calculate 15 working days from now
+  const calculateFifteenWorkingDays = () => {
     let count = 0;
     let currentDate = new Date();
 
-    while (count < 10) {
+    while (count < 15) {
       currentDate.setDate(currentDate.getDate() + 1);
       const day = currentDate.getDay();
       if (day !== 0 && day !== 6) {
@@ -95,7 +95,7 @@ const RequestForm = () => {
         isReplacement: false,
         replacedItemInfo: "",
         urgencyReason: "",
-        dateRequired: calculateTenWorkingDays(),
+        dateRequired: calculateFifteenWorkingDays(),
         approvalStatus: "pending",
         endorserStatus: "pending",
         endorserRemarks: "",
@@ -556,7 +556,7 @@ const RequestForm = () => {
           replacedItemInfo: "",
           urgencyReason: "",
           priority: "medium",
-          dateRequired: calculateTenWorkingDays(),
+          dateRequired: calculateFifteenWorkingDays(),
           comments: "",
           itRemarks: "",
           approvalStatus: "pending",
@@ -1566,45 +1566,47 @@ const RequestForm = () => {
                         </div>
 
                         {/* Stock / INV */}
-                        <div className="flex-1">
-                          <label className="block text-xs font-semibold text-gray-700 mb-1">
-                            Inv (Stock)
-                          </label>
-                          <div className="w-20 border-b-2 border-gray-400 pb-1 h-[26px] flex items-center justify-center">
-                            {(() => {
-                              // Try to get live stock info first
-                              let displayVal = item.inventoryNumber;
-                              if (categories.length > 0 && item.category) {
-                                const liveString = getInventoryString(
-                                  item.category,
-                                  categories,
-                                );
-                                if (liveString !== "N/A") {
-                                  displayVal = liveString;
+                        {["endorser", "it_manager", "service_desk", "super_administrator"].includes(user?.role) && (
+                          <div className="flex-1">
+                            <label className="block text-xs font-semibold text-gray-700 mb-1">
+                              Inv (Stock)
+                            </label>
+                            <div className="w-20 border-b-2 border-gray-400 pb-1 h-[26px] flex items-center justify-center">
+                              {(() => {
+                                // Try to get live stock info first
+                                let displayVal = item.inventoryNumber;
+                                if (categories.length > 0 && item.category) {
+                                  const liveString = getInventoryString(
+                                    item.category,
+                                    categories,
+                                  );
+                                  if (liveString !== "N/A") {
+                                    displayVal = liveString;
+                                  }
                                 }
-                              }
 
-                              if (!displayVal) return null;
+                                if (!displayVal) return null;
 
-                              // Check format (MM-DD) QTY
-                              const match = displayVal.match(
-                                /^\((\d{2}-\d{2})\)\s*(\d+)$/,
-                              );
-                              if (match) {
+                                // Check format (MM-DD) QTY
+                                const match = displayVal.match(
+                                  /^\((\d{2}-\d{2})\)\s*(\d+)$/,
+                                );
+                                if (match) {
+                                  return (
+                                    <span className="text-sm text-gray-900">
+                                      <i>{`(${match[1]})`}</i> : {match[2]}
+                                    </span>
+                                  );
+                                }
                                 return (
                                   <span className="text-sm text-gray-900">
-                                    <i>{`(${match[1]})`}</i> : {match[2]}
+                                    {displayVal}
                                   </span>
                                 );
-                              }
-                              return (
-                                <span className="text-sm text-gray-900">
-                                  {displayVal}
-                                </span>
-                              );
-                            })()}
+                              })()}
+                            </div>
                           </div>
-                        </div>
+                        )}
 
                         {/* Priority (Moved to Item) */}
                         <div className="flex-1">
@@ -2592,7 +2594,20 @@ const RequestForm = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={handleSubmit}
+                      onClick={() => {
+                        if (!validateForm()) return;
+                        setConfirmDialogState({
+                          isOpen: true,
+                          title: "Notice: Expected Turnaround Time",
+                          message: "IT resources often require purchase, with a 15-working-day turnaround from Department Head Approval. Do you want to proceed?",
+                          confirmText: "Acknowledge & Submit",
+                          variant: "info",
+                          onConfirm: () => {
+                            setConfirmDialogState(prev => ({ ...prev, isOpen: false }));
+                            handleSubmit();
+                          }
+                        });
+                      }}
                       disabled={loading}
                       className="flex items-center px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 text-sm font-semibold"
                     >

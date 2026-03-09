@@ -75,7 +75,7 @@ class EmailService {
     }
   }
 
-  async sendEmail(to, subject, html, text = null, attachments = [], cc = null) {
+  async sendEmail(to, subject, html, text = null, attachments = [], cc = null, bcc = null) {
     if (!this.transporter) {
       console.error('❌ Email transporter not initialized');
       return { success: false, error: 'Email service not configured' };
@@ -86,6 +86,7 @@ class EmailService {
         from: process.env.EMAIL_FROM || 'noreply@example.com',
         to: Array.isArray(to) ? to.join(', ') : to,
         cc: cc ? (Array.isArray(cc) ? cc.join(', ') : cc) : undefined,
+        bcc: bcc ? (Array.isArray(bcc) ? bcc.join(', ') : bcc) : undefined,
         subject,
         html,
         text: text || this.htmlToText(html),
@@ -240,7 +241,7 @@ class EmailService {
           </div>
           <div class="content">
             <p>Hello ${requestor.first_name} ${requestor.last_name},</p>
-            <p>Your equipment request has been submitted successfully and is now pending department approval.</p>
+            <p>Your IT requisition request has been submitted successfully and is now pending department approval.</p>
             
             <div class="info-row">
               <span class="label">Request Number:</span> ${request.request_number}
@@ -294,7 +295,7 @@ class EmailService {
           </div>
           <div class="content">
             <p>Hello ${approver.first_name} ${approver.last_name},</p>
-            <p>A new equipment request requires your approval.</p>
+            <p>A new IT requisition request requires your approval.</p>
             
             <div class="info-row">
               <span class="label">Request Number:</span> ${request.request_number}
@@ -359,7 +360,7 @@ class EmailService {
           </div>
           <div class="content">
             <p>Hello ${requestor.first_name} ${requestor.last_name},</p>
-            <p>Your equipment request has been approved by ${approver.first_name} ${approver.last_name} (${stageNames[stage]}).</p>
+            <p>Your request has been approved by ${approver.first_name} ${approver.last_name}${stageNames[stage] ? ` (${stageNames[stage]})` : ''}.</p>
             
             <div class="info-row">
               <span class="label">Request Number:</span> ${request.request_number}
@@ -371,9 +372,9 @@ class EmailService {
             <div class="info-row">
               <span class="label">Completed Date:</span> ${new Date(request.completed_at || new Date()).toLocaleString()}
             </div>
-            ` : `
+            ` : nextStage !== 'Completed' ? `
             <p>Your request is now pending ${nextStage} review.</p>
-            `}
+            ` : ''}
             
             <a href="${this.getFrontendUrl()}/track?code=${request.request_number}" class="button">View Request Status</a>
           </div>
@@ -413,7 +414,7 @@ class EmailService {
           </div>
           <div class="content">
             <p>Hello ${requestor.first_name} ${requestor.last_name},</p>
-            <p>Unfortunately, your equipment request has been declined by ${approver.first_name} ${approver.last_name}.</p>
+            <p>Unfortunately, your request has been declined by ${approver.first_name} ${approver.last_name}.</p>
             
             <div class="info-row">
               <span class="label">Request Number:</span> ${request.request_number}
@@ -467,7 +468,7 @@ class EmailService {
           </div>
           <div class="content">
             <p>Hello ${requestor.first_name} ${requestor.last_name},</p>
-            <p>Your equipment request has been returned by ${approver.first_name} ${approver.last_name} for revision.</p>
+            <p>Your request has been returned by ${approver.first_name} ${approver.last_name} for revision.</p>
             
             <div class="info-row">
               <span class="label">Request Number:</span> ${request.request_number}
@@ -520,7 +521,7 @@ class EmailService {
           </div>
           <div class="content">
             <p>Hello ${verifier.first_name} ${verifier.last_name},</p>
-            <p>You have been assigned as a temporary verifier for an equipment request.</p>
+            <p>You have been assigned as a temporary verifier for an IT requisition request.</p>
             
             <div class="info-row">
               <span class="label">Request Number:</span> ${request.request_number}
@@ -582,7 +583,7 @@ class EmailService {
           </div>
           <div class="content">
             <p>Hello,</p>
-            <p>The equipment request <strong>${request.request_number}</strong> has been <strong>${status}</strong> by the assigned verifier (${verifier.first_name} ${verifier.last_name}).</p>
+            <p>The IT requisition request <strong>${request.request_number}</strong> has been <strong>${status}</strong> by the assigned verifier (${verifier.first_name} ${verifier.last_name}).</p>
             
             <div class="info-row">
               <span class="label">Requested By:</span> ${requestor.first_name} ${requestor.last_name}
@@ -702,7 +703,7 @@ class EmailService {
     return await this.sendEmail(approver.email, subject, html);
   }
 
-  async notifyRequestApproved(request, requestor, approver, stage, ccEmails = null) {
+  async notifyRequestApproved(request, requestor, approver, stage, bccEmails = null) {
     if (!requestor.email) {
       console.log(`⚠️ Skipping email - requestor ${requestor.username} has no email`);
       return;
@@ -711,7 +712,7 @@ class EmailService {
     const subject = `Request Approved: ${request.request_number}`;
     const html = this.getRequestApprovedTemplate(request, requestor, approver, stage);
 
-    return await this.sendEmail(requestor.email, subject, html, null, [], ccEmails);
+    return await this.sendEmail(requestor.email, subject, html, null, [], null, bccEmails);
   }
 
   async notifyRequestDeclined(request, requestor, approver, comments) {
@@ -757,13 +758,13 @@ class EmailService {
     const subject = `Request ${actionText}: ${request.request_number}`;
     const html = this.getVerificationCompletedTemplate(request, requestor, verifier, status, comments);
 
-    // CC IT Managers so they are immediately aware of the verifier's decision
-    const ccEmails = itManagers
+    // BCC IT Managers so they are immediately aware of the verifier's decision
+    const bccEmails = itManagers
       .filter(mgr => mgr.email)
       .map(mgr => mgr.email)
       .join(', ');
 
-    return await this.sendEmail(requestor.email, subject, html, null, [], ccEmails ? ccEmails : undefined);
+    return await this.sendEmail(requestor.email, subject, html, null, [], null, bccEmails ? bccEmails : undefined);
   }
 
   // Vehicle Request Email Methods

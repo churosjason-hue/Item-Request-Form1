@@ -63,8 +63,9 @@ export default function PassengerList({
                                         value={passenger.name}
                                         {...getInputProps({
                                             onChange: (e) => onChange(index, "name", e.target.value),
-                                            className: "w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 print:text-xs",
-                                            disabled: loading,
+                                            className: `w-full bg-transparent border-0 focus:outline-none text-sm text-gray-900 print:text-xs ${isViewing ? 'cursor-not-allowed text-gray-500' : ''}`,
+                                            disabled: loading || isViewing,
+                                            readOnly: isViewing
                                         })}
                                     />
                                 </div>
